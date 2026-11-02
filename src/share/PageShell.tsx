@@ -1,5 +1,6 @@
 import Link from 'next/link';
 import type { ReactNode } from 'react';
+import { LogoMark } from './Logo';
 import styles from './share.module.css';
 
 /** 보기/갤러리 공통 틀: 제목(→ 홈) + 우측 링크 */
@@ -14,6 +15,7 @@ export function PageShell({
     <main className={styles.page}>
       <header className={styles.topbar}>
         <Link href="/" className={styles.title}>
+          <LogoMark className={styles.logo} />
           빼빼로 시뮬레이터
         </Link>
         <Link href={nav.href} className={styles.navLink}>

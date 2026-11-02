@@ -16,6 +16,7 @@ import type { Mask } from '@/src/silhouette/raster';
 import { createRecipe } from '@/src/recipe/defaults';
 import type { Coating, PeperoRecipe, Silhouette } from '@/src/recipe/types';
 import { RELIEF_STRENGTH } from '@/src/recipe/relief';
+import { LogoMark } from '@/src/share/Logo';
 import { extractRelief, isReliefEmpty, reliefToPngBlob } from '@/src/silhouette/relief';
 import { savePepero } from '@/src/api/peperos';
 import { NICKNAME_MAX, validateNickname, type NicknameResult } from '@/src/lib/nickname';
@@ -240,7 +241,10 @@ export function MakerFlow() {
     <main className={`${styles.root} ${step === 'dip' ? styles.rootDip : ''}`}>
       <header className={styles.header}>
         <div className={styles.headerTop}>
-          <h1 className={styles.title}>빼빼로 시뮬레이터</h1>
+          <h1 className={styles.title}>
+            <LogoMark className={styles.logo} />
+            빼빼로 시뮬레이터
+          </h1>
           <Link href="/gallery" className={styles.headerLink}>
             갤러리
           </Link>
