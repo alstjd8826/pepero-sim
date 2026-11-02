@@ -261,7 +261,7 @@ export function MakerFlow() {
       {step === 'finish' && recipe && (
         <section className={styles.panel}>
           <div className={styles.finishPreview}>
-            <PeperoPreview recipe={recipe} onCaptureReady={onCaptureReady} />
+            <PeperoPreview recipe={recipe} mode="pose" onCaptureReady={onCaptureReady} />
           </div>
           {savedId ? (
             <div className={styles.saved}>
@@ -297,11 +297,12 @@ export function MakerFlow() {
                   placeholder={`1~${NICKNAME_MAX}자`}
                   autoComplete="nickname"
                   aria-invalid={nicknameError ? true : undefined}
+                  aria-describedby={nicknameError ? 'nickname-error' : undefined}
                   data-testid="nickname"
                 />
               </label>
               {nicknameError && (
-                <p className={styles.error} role="alert">
+                <p id="nickname-error" className={styles.error} role="alert">
                   {nicknameError}
                 </p>
               )}

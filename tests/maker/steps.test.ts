@@ -33,9 +33,9 @@ describe('thumbnail helpers', () => {
     expect(MAX_THUMBNAIL_BYTES).toBe(300 * 1024);
   });
 
-  it('512 실패 시 384로 한 번 더 시도', () => {
-    expect(thumbnailSizes(512)).toEqual([512, 384]);
-    expect(thumbnailSizes(384)).toEqual([384]);
+  it('300KB 초과 시 384 → 256 순서로 줄여 다시 시도', () => {
+    expect(thumbnailSizes(512)).toEqual([512, 384, 256]);
+    expect(thumbnailSizes(384)).toEqual([384, 256]);
     expect(thumbnailSizes(256)).toEqual([256]);
   });
 

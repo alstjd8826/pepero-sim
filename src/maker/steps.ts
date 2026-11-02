@@ -15,11 +15,11 @@ export function prevStep(id: StepId): StepId | null {
 }
 
 export const MAX_THUMBNAIL_BYTES = 300 * 1024;
-const FALLBACK_SIZE = 384;
+const FALLBACK_SIZES = [384, 256];
 
-/** 썸네일을 시도할 크기 순서. 첫 크기가 300KB 를 넘으면 384 로 한 번 더. */
+/** 썸네일을 시도할 크기 순서. 300KB 를 넘으면 384 → 256 으로 줄여 다시 시도. */
 export function thumbnailSizes(size: number): number[] {
-  return size > FALLBACK_SIZE ? [size, FALLBACK_SIZE] : [size];
+  return [size, ...FALLBACK_SIZES.filter((s) => s < size)];
 }
 
 /** sw×sh 를 size×size 정사각형 안에 비율 유지(contain)·가운데 정렬로 넣을 사각형. */

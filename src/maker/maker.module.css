@@ -107,6 +107,14 @@
   color: var(--choco);
 }
 
+/* 파일 input 은 숨겨져 있으니 감싼 label 에 키보드 포커스 표시 */
+.primary:has(input:focus-visible),
+.primary:focus-visible,
+.secondary:focus-visible {
+  outline: 3px solid #e0a252;
+  outline-offset: 2px;
+}
+
 .primary:disabled,
 .secondary:disabled,
 .disabled {
