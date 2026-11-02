@@ -215,3 +215,31 @@
   color: var(--muted);
   padding: 48px 0;
 }
+
+.sortToggle {
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+  margin-bottom: 12px;
+}
+
+.sortOption {
+  padding: 6px 14px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  color: var(--choco);
+  font-size: 14px;
+  text-decoration: none;
+}
+
+.sortOption[aria-current='page'] {
+  background: var(--choco);
+  border-color: var(--choco);
+  color: #fff;
+  font-weight: 600;
+}
+
+.sortOption:focus-visible {
+  outline: 3px solid #e0a252;
+  outline-offset: 2px;
+}

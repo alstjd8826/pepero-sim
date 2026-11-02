@@ -1,4 +1,5 @@
-import { Suspense } from 'react';
+import { cache, Suspense } from 'react';
+import type { Metadata } from 'next';
 import { notFound } from 'next/navigation';
 import { connection } from 'next/server';
 import Link from 'next/link';
@@ -6,9 +7,22 @@ import { getPepero, type PeperoRow } from '@/src/api/peperos';
 import { LikeButton } from '@/src/share/LikeButton';
 import { PageShell, RetryLater } from '@/src/share/PageShell';
 import { PeperoViewerLoader } from '@/src/share/PeperoViewerLoader';
+import { peperoMetadata } from '@/src/share/meta';
 import styles from '@/src/share/share.module.css';
 
-export const metadata = { title: '빼빼로 보기 · 빼빼로 시뮬레이터' };
+/** 메타데이터와 본문이 같은 요청에서 RPC 를 두 번 부르지 않게 요청 단위로 묶는다 */
+const loadPepero = cache((id: string) => getPepero(id));
+
+export async function generateMetadata({ params }: PageProps<'/p/[id]'>): Promise<Metadata> {
+  await connection();
+  const { id } = await params;
+  try {
+    return peperoMetadata(await loadPepero(id));
+  } catch (e) {
+    console.error('[p/[id]] 메타데이터 조회 실패', e);
+    return { title: '빼빼로 보기' };
+  }
+}
 
 export default function ViewPage({ params }: PageProps<'/p/[id]'>) {
   return (
@@ -26,7 +40,7 @@ async function ViewContent({ params }: { params: PageProps<'/p/[id]'>['params'] 
   let row: PeperoRow | null = null;
   let failed = false;
   try {
-    row = await getPepero(id);
+    row = await loadPepero(id);
   } catch (e) {
     console.error('[p/[id]] getPepero 실패', e);
     failed = true;
