@@ -16,7 +16,6 @@ type DbRow = {
   id: string;
   nickname: string;
   recipe: unknown;
-  thumbnail_url: string;
   like_count: number;
   created_at: string;
 };
@@ -40,13 +39,17 @@ export function generateId(): string {
   return out;
 }
 
-function toRow(r: DbRow): PeperoRow | null {
+function thumbnailUrlOf(client: SupabaseClient, id: string): string {
+  return client.storage.from(BUCKET).getPublicUrl(`${id}.png`).data.publicUrl;
+}
+
+function toRow(r: DbRow, client: SupabaseClient): PeperoRow | null {
   try {
     return {
       id: r.id,
       nickname: r.nickname,
       recipe: parseRecipe(r.recipe),
-      thumbnailUrl: r.thumbnail_url,
+      thumbnailUrl: thumbnailUrlOf(client, r.id),
       likeCount: r.like_count,
       createdAt: r.created_at,
     };
@@ -54,6 +57,10 @@ function toRow(r: DbRow): PeperoRow | null {
     console.warn(`[peperos] recipe 파싱 실패, 건너뜀: ${r.id}`, e);
     return null;
   }
+}
+
+function isStorageConflict(e: { message?: string; statusCode?: string | number }): boolean {
+  return String(e.statusCode) === '409' || /already exists|duplicate/i.test(e.message ?? '');
 }
 
 export async function savePepero(
@@ -71,18 +78,23 @@ export async function savePepero(
     const up = await client.storage
       .from(BUCKET)
       .upload(path, input.thumbnail, { contentType: 'image/png', upsert: false });
-    if (up.error) throw new Error(up.error.message);
-    const thumbnailUrl = client.storage.from(BUCKET).getPublicUrl(path).data.publicUrl;
+    if (up.error) {
+      // id 충돌은 보통 여기(스토리지 409 Duplicate)에서 먼저 드러난다.
+      if (isStorageConflict(up.error)) {
+        lastError = up.error;
+        continue;
+      }
+      throw new Error(up.error.message);
+    }
 
     const { error } = await client.from('peperos').insert({
       id,
       nickname: nick.value,
       recipe,
-      thumbnail_url: thumbnailUrl,
       is_public: input.isPublic,
     });
     if (!error) return { id };
-    // 업로드가 upsert:false 라 id 충돌은 보통 업로드 단계에서 먼저 걸리지만, insert 단계 충돌도 재시도한다.
+    // 업로드는 통과했지만 insert 단계에서 id가 충돌한 경우(드묾)도 새 id로 재시도.
     if (error.code !== '23505') throw new Error(error.message);
     lastError = error;
   }
@@ -95,26 +107,28 @@ export async function getPepero(
   id: string,
   client: SupabaseClient = getSupabase(),
 ): Promise<PeperoRow | null> {
-  const { data, error } = await client
-    .from('peperos')
-    .select('*')
-    .eq('id', id)
-    .eq('hidden', false)
-    .maybeSingle();
+  const { data, error } = await client.rpc('get_pepero', { p_id: id });
   if (error) throw new Error(error.message);
-  if (!data) return null;
-  return toRow(data as DbRow);
+  const row = (Array.isArray(data) ? data[0] : data) as DbRow | null | undefined;
+  if (!row) return null;
+  return toRow(row, client);
 }
 
 type Cursor = { c: string; i: string; l?: number };
 
 function encodeCursor(c: Cursor): string {
-  return Buffer.from(JSON.stringify(c)).toString('base64url');
+  const bytes = new TextEncoder().encode(JSON.stringify(c));
+  let bin = '';
+  for (const b of bytes) bin += String.fromCharCode(b);
+  return btoa(bin).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
 }
 
 function decodeCursor(s: string, sort: 'latest' | 'popular'): Cursor {
   try {
-    const c = JSON.parse(Buffer.from(s, 'base64url').toString('utf8')) as Cursor;
+    const b64 = s.replace(/-/g, '+').replace(/_/g, '/');
+    const bin = atob(b64 + '='.repeat((4 - (b64.length % 4)) % 4));
+    const bytes = Uint8Array.from(bin, (ch) => ch.charCodeAt(0));
+    const c = JSON.parse(new TextDecoder().decode(bytes)) as Cursor;
     const ok =
       typeof c.c === 'string' &&
       typeof c.i === 'string' &&
@@ -167,7 +181,7 @@ export async function listGallery(
   const page = rows.slice(0, limit);
   const hasMore = rows.length > limit;
   const last = page[page.length - 1];
-  const items = page.map(toRow).filter((r): r is PeperoRow => r !== null);
+  const items = page.map((r) => toRow(r, client)).filter((r): r is PeperoRow => r !== null);
   return {
     items,
     nextCursor:

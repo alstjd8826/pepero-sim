@@ -14,7 +14,7 @@ type Call = { op: string; args: unknown[] };
 /** 체인 가능한 thenable 쿼리 빌더 가짜. */
 function fakeClient(opts: {
   insertResults?: Array<{ error: { code?: string; message: string } | null }>;
-  uploadError?: { message: string } | null;
+  uploadErrors?: Array<{ message: string; statusCode?: string } | null>;
   selectRows?: unknown[];
   single?: unknown;
   rpc?: { data: unknown; error: unknown };
@@ -22,6 +22,7 @@ function fakeClient(opts: {
   const calls: Call[] = [];
   const log = (op: string, ...args: unknown[]) => calls.push({ op, args });
   const inserts = [...(opts.insertResults ?? [])];
+  const uploads = [...(opts.uploadErrors ?? [])];
   const builder = (kind: 'select' | 'insert') => {
     const b: Record<string, unknown> = {};
     for (const m of ['select', 'eq', 'order', 'limit', 'or']) {
@@ -57,7 +58,7 @@ function fakeClient(opts: {
       from: (bucket: string) => ({
         upload: async (path: string, blob: unknown, o: unknown) => {
           log('upload', bucket, path, blob, o);
-          return { error: opts.uploadError ?? null };
+          return { error: uploads.shift() ?? null };
         },
         getPublicUrl: (path: string) => ({
           data: { publicUrl: `https://x.supabase.co/${bucket}/${path}` },
@@ -66,6 +67,7 @@ function fakeClient(opts: {
     },
     rpc: async (fn: string, args: unknown) => {
       log('rpc', fn, args);
+      if (fn === 'get_pepero') return { data: opts.single ? [opts.single] : [], error: null };
       return opts.rpc ?? { data: 1, error: null };
     },
   };
@@ -77,7 +79,6 @@ const row = (i: number, extra = {}) => ({
   id: `id${String(i).padStart(6, '0')}`,
   nickname: 'n',
   recipe,
-  thumbnail_url: 'u',
   like_count: 10 - i,
   created_at: `2026-11-02T00:00:0${i}+00:00`,
   ...extra,
@@ -108,8 +109,8 @@ describe('savePepero', () => {
       id,
       nickname: '꾸그',
       is_public: true,
-      thumbnail_url: `https://x.supabase.co/thumbnails/${id}.png`,
     });
+    expect(ins).not.toHaveProperty('thumbnail_url');
   });
 
   it('잘못된 닉네임이면 throw, 업로드 안 함', async () => {
@@ -157,8 +158,27 @@ describe('savePepero', () => {
     expect(calls.filter((c) => c.op === 'insert')).toHaveLength(1);
   });
 
+  it('스토리지 409면 새 id로 재시도', async () => {
+    const dup = { message: 'The resource already exists', statusCode: '409' };
+    const { client, calls } = fakeClient({ uploadErrors: [dup, dup] });
+    await savePepero({ nickname: 'a', recipe, thumbnail: blob, isPublic: false }, client);
+    const paths = calls.filter((c) => c.op === 'upload').map((c) => c.args[1]);
+    expect(paths).toHaveLength(3);
+    expect(new Set(paths).size).toBe(3);
+    expect(calls.filter((c) => c.op === 'insert')).toHaveLength(1);
+  });
+
+  it('스토리지 409가 3회면 에러, insert 없음', async () => {
+    const dup = { message: 'Duplicate', statusCode: '409' };
+    const { client, calls } = fakeClient({ uploadErrors: [dup, dup, dup] });
+    await expect(
+      savePepero({ nickname: 'a', recipe, thumbnail: blob, isPublic: false }, client),
+    ).rejects.toThrow();
+    expect(calls.some((c) => c.op === 'insert')).toBe(false);
+  });
+
   it('업로드 실패면 insert 안 함', async () => {
-    const { client, calls } = fakeClient({ uploadError: { message: 'up' } });
+    const { client, calls } = fakeClient({ uploadErrors: [{ message: 'up' }] });
     await expect(
       savePepero({ nickname: 'a', recipe, thumbnail: blob, isPublic: false }, client),
     ).rejects.toThrow('up');
@@ -167,14 +187,17 @@ describe('savePepero', () => {
 });
 
 describe('getPepero', () => {
-  it('camelCase 매핑', async () => {
-    const { client } = fakeClient({ single: row(1) });
-    const r = await getPepero('id000001', client);
+  it('get_pepero rpc 호출, camelCase 매핑, 썸네일 URL은 id로 계산', async () => {
+    const { client, calls } = fakeClient({ single: row(1) });
+    await getPepero('id000001', client);
+    expect(calls.find((c) => c.op === 'rpc')!.args).toEqual(['get_pepero', { p_id: 'id000001' }]);
+    expect(calls.some((c) => c.op === 'from')).toBe(false);
+    const r = await getPepero('id000001', fakeClient({ single: row(1) }).client);
     expect(r).toEqual({
       id: 'id000001',
       nickname: 'n',
       recipe,
-      thumbnailUrl: 'u',
+      thumbnailUrl: 'https://x.supabase.co/thumbnails/id000001.png',
       likeCount: 9,
       createdAt: '2026-11-02T00:00:01+00:00',
     });
@@ -241,6 +264,14 @@ describe('listGallery', () => {
     await listGallery({ sort: 'popular', cursor: r1.nextCursor }, b.client);
     const or = b.calls.find((c) => c.op === 'or')!.args[0] as string;
     expect(or).toContain('like_count.lt.9');
+  });
+
+  it('커서는 비ASCII 닉네임 없이도 base64url 안전, id 문자 보존', async () => {
+    const a = fakeClient({ selectRows: [row(1, { id: 'Zz09_-aB' }), row(2)] });
+    const r1 = await listGallery({ sort: 'latest', limit: 1 }, a.client);
+    const b = fakeClient();
+    await listGallery({ sort: 'latest', cursor: r1.nextCursor }, b.client);
+    expect(b.calls.find((c) => c.op === 'or')!.args[0]).toContain('Zz09_-aB');
   });
 
   it('깨진 커서는 에러', async () => {

@@ -1,15 +1,27 @@
 -- 빼빼로 시뮬레이터 초기 스키마. Supabase SQL Editor에서 실행.
 
 create table public.peperos (
-  id text primary key,
-  nickname text not null check (char_length(nickname) between 1 and 20),
+  id text primary key check (id ~ '^[A-Za-z0-9]{8}$'),
+  nickname text not null check (char_length(btrim(nickname)) between 1 and 20),
   recipe jsonb not null,
-  thumbnail_url text,
   like_count int not null default 0,
   is_public boolean not null default true,
   hidden boolean not null default false,
   owner_id uuid null,
-  created_at timestamptz not null default now()
+  created_at timestamptz not null default now(),
+  -- 레시피 크기 상한 (spec 6.2): 전체 64KB, outer 3..400점, holes 최대 16개
+  constraint peperos_recipe_size check (pg_column_size(recipe) <= 65536),
+  constraint peperos_recipe_outer check (
+    jsonb_typeof(recipe #> '{shape,silhouette,outer}') = 'array'
+    and jsonb_array_length(recipe #> '{shape,silhouette,outer}') between 3 and 400
+  ),
+  constraint peperos_recipe_holes check (
+    recipe #> '{shape,silhouette,holes}' is null
+    or (
+      jsonb_typeof(recipe #> '{shape,silhouette,holes}') = 'array'
+      and jsonb_array_length(recipe #> '{shape,silhouette,holes}') <= 16
+    )
+  )
 );
 
 create index peperos_latest_idx on public.peperos (created_at desc, id desc)
@@ -19,10 +31,11 @@ create index peperos_popular_idx on public.peperos (like_count desc, created_at 
 
 alter table public.peperos enable row level security;
 
-create policy "anon can read visible peperos"
+-- 비공개 작품은 목록/필터로 열거 불가. id를 아는 경우만 get_pepero RPC로 열람.
+create policy "anon can read public visible peperos"
   on public.peperos for select
   to anon
-  using (hidden = false);
+  using (is_public and not hidden);
 
 create policy "anon can insert fresh peperos"
   on public.peperos for insert
@@ -30,6 +43,22 @@ create policy "anon can insert fresh peperos"
   with check (like_count = 0 and hidden = false and owner_id is null);
 
 -- update/delete 정책 없음 = anon 불가
+-- insert는 컬럼 단위로만 허용 (created_at, like_count 등 임의 지정 차단)
+revoke insert on public.peperos from anon;
+grant insert (id, nickname, recipe, is_public) on public.peperos to anon;
+
+create or replace function public.get_pepero(p_id text)
+returns setof public.peperos
+language sql
+stable
+security definer
+set search_path = public
+as $$
+  select * from public.peperos where id = p_id and not hidden;
+$$;
+
+revoke all on function public.get_pepero(text) from public;
+grant execute on function public.get_pepero(text) to anon;
 
 create or replace function public.like_pepero(p_id text)
 returns int
