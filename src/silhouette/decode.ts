@@ -15,13 +15,16 @@ function draw(bitmap: ImageBitmap, width: number, height: number): ImageData {
     | OffscreenCanvasRenderingContext2D
     | null;
   if (!ctx) throw new Error('2d context unavailable');
+  ctx.imageSmoothingEnabled = true;
+  ctx.imageSmoothingQuality = 'high';
   ctx.drawImage(bitmap, 0, 0, width, height);
   return ctx.getImageData(0, 0, width, height);
 }
 
 /** 파일을 디코드하고 긴 변 maxSide 이하로 줄여 ImageData로 돌려준다. */
 export async function fileToImageData(file: Blob, maxSide = 1024): Promise<ImageData> {
-  const bitmap = await createImageBitmap(file);
+  // 일부 브라우저 기본값이 'none'이라 세로 사진이 눕는 걸 막기 위해 명시한다.
+  const bitmap = await createImageBitmap(file, { imageOrientation: 'from-image' });
   try {
     const { width, height } = computeScaledSize(bitmap.width, bitmap.height, maxSide);
     return draw(bitmap, width, height);
