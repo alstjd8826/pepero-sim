@@ -1,6 +1,7 @@
 import type { Silhouette } from '@/src/recipe/types';
 import { cleanMask, cleanedMaskToSilhouette } from './contour';
 import { blobToImageData, fileToImageData, imageDataToBlob } from './decode';
+import { detectFlatBackground, flatBackgroundMask } from './flatBackground';
 import { alphaToMask, hasMeaningfulAlpha, type Mask } from './raster';
 
 export { computeScaledSize } from './scale';
@@ -24,25 +25,36 @@ export async function imageToSilhouette(
   try {
     const image = await fileToImageData(file, MAX_SIDE);
     report(0.05);
-    let alphaSource = image;
-    if (!hasMeaningfulAlpha(image)) {
-      // 모델은 배경제거가 필요할 때만 지연 로딩한다(첫 화면 번들 제외).
-      const { removeBackground } = await import('@imgly/background-removal');
-      const input = await imageDataToBlob(image);
-      const out = await removeBackground(input, {
-        progress: (key: string, current: number, total: number) => {
-          const f = total > 0 ? current / total : 0;
-          report(key.startsWith('fetch') ? 0.05 + 0.75 * f : 0.8 + 0.15 * f);
-        },
-      });
-      alphaSource = await blobToImageData(out, image.width, image.height);
-    }
+
     // 각인(extractRelief)도 실루엣과 같은 정리된 마스크를 써야 bbox 가 정확히 맞는다.
-    const mask = cleanMask(alphaToMask(alphaSource));
-    const silhouette = cleanedMaskToSilhouette(mask);
-    report(1);
-    if (!silhouette) return { ok: false, reason: 'not-found' };
-    return { ok: true, silhouette, mask, image };
+    const finish = (raw: Mask): SilhouetteResult => {
+      const mask = cleanMask(raw);
+      const silhouette = cleanedMaskToSilhouette(mask);
+      report(1);
+      if (!silhouette) return { ok: false, reason: 'not-found' };
+      return { ok: true, silhouette, mask, image };
+    };
+
+    if (hasMeaningfulAlpha(image)) return finish(alphaToMask(image));
+
+    // 흰/단색 배경 일러스트: 사진용 모델은 연한 몸통을 배경으로 지우므로, 가장자리 채우기로 처리한다.
+    // 아무것도 남지 않으면(이미지 전체가 한 색 등) 모델 경로로 넘긴다.
+    const bg = detectFlatBackground(image);
+    if (bg) {
+      const flat = finish(flatBackgroundMask(image, bg));
+      if (flat.ok) return flat;
+    }
+
+    // 모델은 배경제거가 필요할 때만 지연 로딩한다(첫 화면 번들 제외).
+    const { removeBackground } = await import('@imgly/background-removal');
+    const input = await imageDataToBlob(image);
+    const out = await removeBackground(input, {
+      progress: (key: string, current: number, total: number) => {
+        const f = total > 0 ? current / total : 0;
+        report(key.startsWith('fetch') ? 0.05 + 0.75 * f : 0.8 + 0.15 * f);
+      },
+    });
+    return finish(alphaToMask(await blobToImageData(out, image.width, image.height)));
   } catch (e) {
     console.warn('imageToSilhouette failed', e);
     return { ok: false, reason: 'load-failed' };

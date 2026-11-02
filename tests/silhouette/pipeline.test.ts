@@ -56,6 +56,21 @@ describe('imageToSilhouette', () => {
     expect(await imageToSilhouette(file)).toEqual({ ok: false, reason: 'not-found' });
   });
 
+  it('(e) 흰 단색 배경 일러스트는 배경제거 모델 없이 가장자리 채우기로 찾는다', async () => {
+    // 흰 배경 + 크림색 원 (알파 없음)
+    const data = new Uint8ClampedArray(64 * 64 * 4);
+    for (let y = 0; y < 64; y++)
+      for (let x = 0; x < 64; x++) {
+        const i = (y * 64 + x) * 4;
+        const inside = (x - 32) ** 2 + (y - 32) ** 2 < 20 ** 2;
+        data.set(inside ? [255, 242, 217, 255] : [255, 255, 255, 255], i);
+      }
+    fileToImageData.mockResolvedValue({ width: 64, height: 64, data } as unknown as ImageData);
+    const r = await imageToSilhouette(file);
+    expect(removeBackground).not.toHaveBeenCalled();
+    expect(r.ok).toBe(true);
+  });
+
   it('디코드 실패는 load-failed', async () => {
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
     fileToImageData.mockRejectedValue(new Error('bad'));
