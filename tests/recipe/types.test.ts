@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { ZodError } from 'zod';
 import { createRecipe, parseRecipe } from '@/src/recipe/types';
+import { reliefKeyFor, resolveReliefUrl } from '@/src/recipe/relief';
 
 const tri: [number, number][] = [[0, 0], [1, 0], [0.5, 1]];
 const poly = (n: number): [number, number][] =>
@@ -29,7 +30,7 @@ describe('parseRecipe', () => {
       ...createRecipe({ outer: tri, holes: [tri] }, false),
       coatings: [coating],
     };
-    r.shape.relief = { heightmapUrl: 'https://x/h.png', strength: 0.5 };
+    r.shape.relief = { heightmapUrl: 'reliefs/AbCd1234.png', strength: 0.5 };
     expect(parseRecipe(JSON.parse(JSON.stringify(r)))).toEqual(r);
   });
   it('outer 2점이면 outer 경로로 throw', () => {
@@ -57,5 +58,43 @@ describe('parseRecipe', () => {
   it('toppings 가 비어있지 않으면 throw', () => {
     const r = { ...createRecipe({ outer: tri }, true), toppings: [{ type: 'x' }] };
     expect(issuePath(r)).toContain('toppings');
+  });
+});
+
+describe('relief 높이맵 주소', () => {
+  const withRelief = (heightmapUrl: string, strength = 0.6) => {
+    const r = createRecipe({ outer: tri }, true);
+    r.shape.relief = { heightmapUrl, strength };
+    return JSON.parse(JSON.stringify(r));
+  };
+  it('reliefKeyFor 결과는 통과', () => {
+    expect(parseRecipe(withRelief(reliefKeyFor('AbCd1234'))).shape.relief?.heightmapUrl).toBe(
+      'reliefs/AbCd1234.png',
+    );
+  });
+  it.each([
+    'https://evil.example.com/x.png',
+    'https://abc.supabase.co/storage/v1/object/public/reliefs/AbCd1234.png',
+    '//evil.example.com/reliefs/AbCd1234.png',
+    'reliefs/../thumbnails/AbCd1234.png',
+    'reliefs/AbCd123.png',
+    'thumbnails/AbCd1234.png',
+    'blob:http://localhost/123',
+    'reliefs/AbCd1234.png?x=1',
+  ])('외부·다른 형식 주소는 거부: %s', (url) => {
+    expect(issuePath(withRelief(url))).toEqual(['shape', 'relief', 'heightmapUrl']);
+  });
+  it('strength 는 0~1', () => {
+    expect(issuePath(withRelief('reliefs/AbCd1234.png', 1.5))).toEqual(['shape', 'relief', 'strength']);
+    expect(issuePath(withRelief('reliefs/AbCd1234.png', -0.1))).toEqual(['shape', 'relief', 'strength']);
+  });
+  it('resolveReliefUrl: 키 → 이 프로젝트 공개 URL, 그 밖은 null (blob 은 그대로)', () => {
+    const base = 'https://proj.supabase.co/';
+    expect(resolveReliefUrl('reliefs/AbCd1234.png', base)).toBe(
+      'https://proj.supabase.co/storage/v1/object/public/reliefs/AbCd1234.png',
+    );
+    expect(resolveReliefUrl('https://evil.example.com/x.png', base)).toBeNull();
+    expect(resolveReliefUrl('reliefs/AbCd1234.png', '')).toBeNull();
+    expect(resolveReliefUrl('blob:http://localhost:3000/abc', base)).toBe('blob:http://localhost:3000/abc');
   });
 });

@@ -1,5 +1,5 @@
 import type { Silhouette } from '@/src/recipe/types';
-import { maskToSilhouette } from './contour';
+import { cleanMask, cleanedMaskToSilhouette } from './contour';
 import { blobToImageData, fileToImageData, imageDataToBlob } from './decode';
 import { alphaToMask, hasMeaningfulAlpha, type Mask } from './raster';
 
@@ -11,7 +11,7 @@ export type SilhouetteResult =
 
 const MAX_SIDE = 1024;
 
-/** 업로드 파일 → 실루엣. mask·image는 각인에서 재사용하되 저장하지 않는다. */
+/** 업로드 파일 → 실루엣. mask(정리된 마스크)·image는 각인에서 재사용하되 저장하지 않는다. */
 export async function imageToSilhouette(
   file: File,
   onProgress?: (p: number) => void,
@@ -37,8 +37,9 @@ export async function imageToSilhouette(
       });
       alphaSource = await blobToImageData(out, image.width, image.height);
     }
-    const mask = alphaToMask(alphaSource);
-    const silhouette = maskToSilhouette(mask);
+    // 각인(extractRelief)도 실루엣과 같은 정리된 마스크를 써야 bbox 가 정확히 맞는다.
+    const mask = cleanMask(alphaToMask(alphaSource));
+    const silhouette = cleanedMaskToSilhouette(mask);
     report(1);
     if (!silhouette) return { ok: false, reason: 'not-found' };
     return { ok: true, silhouette, mask, image };

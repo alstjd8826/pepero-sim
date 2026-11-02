@@ -15,6 +15,8 @@ type Call = { op: string; args: unknown[] };
 function fakeClient(opts: {
   insertResults?: Array<{ error: { code?: string; message: string } | null }>;
   uploadErrors?: Array<{ message: string; statusCode?: string } | null>;
+  /** 버킷별 업로드 결과 큐 (있으면 uploadErrors 대신 사용) */
+  bucketUploadErrors?: Record<string, Array<{ message: string; statusCode?: string } | null>>;
   selectRows?: unknown[];
   single?: unknown;
   rpc?: { data: unknown; error: unknown };
@@ -58,7 +60,8 @@ function fakeClient(opts: {
       from: (bucket: string) => ({
         upload: async (path: string, blob: unknown, o: unknown) => {
           log('upload', bucket, path, blob, o);
-          return { error: uploads.shift() ?? null };
+          const q = opts.bucketUploadErrors?.[bucket];
+          return { error: (q ? q.shift() : uploads.shift()) ?? null };
         },
         getPublicUrl: (path: string) => ({
           data: { publicUrl: `https://x.supabase.co/${bucket}/${path}` },
@@ -183,6 +186,100 @@ describe('savePepero', () => {
       savePepero({ nickname: 'a', recipe, thumbnail: blob, isPublic: false }, client),
     ).rejects.toThrow('up');
     expect(calls.some((c) => c.op === 'insert')).toBe(false);
+  });
+});
+
+describe('savePepero 각인', () => {
+  const png = new Blob(['r'], { type: 'image/png' });
+  const ops = (calls: Call[]) =>
+    calls
+      .filter((c) => c.op === 'upload' || c.op === 'insert')
+      .map((c) => (c.op === 'upload' ? `upload:${c.args[0]}/${c.args[1]}` : 'insert'));
+
+  it('썸네일 → 각인(같은 id) → insert 순서, 레시피엔 저장 키', async () => {
+    const { client, calls } = fakeClient();
+    const { id } = await savePepero(
+      { nickname: 'a', recipe, thumbnail: blob, isPublic: true, relief: { png, strength: 0.6 } },
+      client,
+    );
+    expect(ops(calls)).toEqual([`upload:thumbnails/${id}.png`, `upload:reliefs/${id}.png`, 'insert']);
+    const up = calls.filter((c) => c.op === 'upload')[1];
+    expect(up.args[2]).toBe(png);
+    expect(up.args[3]).toMatchObject({ upsert: false, contentType: 'image/png' });
+    const ins = calls.find((c) => c.op === 'insert')!.args[0] as { recipe: typeof recipe };
+    expect(ins.recipe.shape.relief).toEqual({ heightmapUrl: `reliefs/${id}.png`, strength: 0.6 });
+  });
+
+  it('relief 없으면 기존처럼 썸네일만, 레시피에 relief 없음', async () => {
+    const { client, calls } = fakeClient();
+    await savePepero({ nickname: 'a', recipe, thumbnail: blob, isPublic: true }, client);
+    expect(calls.filter((c) => c.op === 'upload')).toHaveLength(1);
+    const ins = calls.find((c) => c.op === 'insert')!.args[0] as { recipe: typeof recipe };
+    expect(ins.recipe.shape.relief).toBeUndefined();
+  });
+
+  it('strength 0 이면 각인 업로드 안 하고 relief 생략', async () => {
+    const { client, calls } = fakeClient();
+    await savePepero(
+      { nickname: 'a', recipe, thumbnail: blob, isPublic: true, relief: { png, strength: 0 } },
+      client,
+    );
+    expect(calls.filter((c) => c.op === 'upload')).toHaveLength(1);
+    const ins = calls.find((c) => c.op === 'insert')!.args[0] as { recipe: typeof recipe };
+    expect(ins.recipe.shape.relief).toBeUndefined();
+  });
+
+  it('reliefs 버킷이 없으면(0002 미적용) 경고 후 각인 없이 저장', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const { client, calls } = fakeClient({
+      bucketUploadErrors: { reliefs: [{ message: 'Bucket not found', statusCode: '404' }] },
+    });
+    const { id } = await savePepero(
+      { nickname: 'a', recipe, thumbnail: blob, isPublic: true, relief: { png, strength: 0.6 } },
+      client,
+    );
+    expect(ops(calls)).toEqual([`upload:thumbnails/${id}.png`, `upload:reliefs/${id}.png`, 'insert']);
+    const ins = calls.find((c) => c.op === 'insert')!.args[0] as { id: string; recipe: typeof recipe };
+    expect(ins.id).toBe(id);
+    expect(ins.recipe.shape.relief).toBeUndefined();
+    expect(warn).toHaveBeenCalled();
+    warn.mockRestore();
+  });
+
+  it('각인 409 면 새 id 로 썸네일부터 다시', async () => {
+    const dup = { message: 'The resource already exists', statusCode: '409' };
+    const { client, calls } = fakeClient({ bucketUploadErrors: { reliefs: [dup] } });
+    const { id } = await savePepero(
+      { nickname: 'a', recipe, thumbnail: blob, isPublic: true, relief: { png, strength: 0.5 } },
+      client,
+    );
+    const o = ops(calls);
+    expect(o).toHaveLength(5);
+    expect(o.slice(2)).toEqual([`upload:thumbnails/${id}.png`, `upload:reliefs/${id}.png`, 'insert']);
+    expect(o[0]).not.toBe(`upload:thumbnails/${id}.png`);
+  });
+
+  it('썸네일 업로드 실패는 여전히 실패 (각인 업로드 안 함)', async () => {
+    const { client, calls } = fakeClient({ bucketUploadErrors: { thumbnails: [{ message: 'up' }] } });
+    await expect(
+      savePepero(
+        { nickname: 'a', recipe, thumbnail: blob, isPublic: true, relief: { png, strength: 0.6 } },
+        client,
+      ),
+    ).rejects.toThrow('up');
+    expect(calls.filter((c) => c.op === 'upload')).toHaveLength(1);
+    expect(calls.some((c) => c.op === 'insert')).toBe(false);
+  });
+
+  it('입력 레시피에 섞여 온 relief(다른 id 키)는 버리고 이번 저장 기준으로만 채운다', async () => {
+    const { client, calls } = fakeClient();
+    const withForeign = {
+      ...recipe,
+      shape: { ...recipe.shape, relief: { heightmapUrl: 'reliefs/Zzzzzzzz.png', strength: 1 } },
+    };
+    await savePepero({ nickname: 'a', recipe: withForeign, thumbnail: blob, isPublic: true }, client);
+    const ins = calls.find((c) => c.op === 'insert')!.args[0] as { recipe: typeof recipe };
+    expect(ins.recipe.shape.relief).toBeUndefined();
   });
 });
 

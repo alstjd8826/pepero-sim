@@ -47,9 +47,18 @@ export function traceOuterContour(mask: Mask): Vec2[] {
   return out.reverse();
 }
 
+/** 실루엣·각인이 공유하는 정리된 마스크: open(2) → close(3) → 최대 덩어리. */
+export function cleanMask(mask: Mask): Mask {
+  return largestComponent(morphClose(morphOpen(mask, 2), 3));
+}
+
 /** open(2) → close(3) → 최대 덩어리 → 추적 → DP → chaikin(2) → 정규화. */
 export function maskToSilhouette(mask: Mask): Silhouette | null {
-  const cleaned = largestComponent(morphClose(morphOpen(mask, 2), 3));
+  return cleanedMaskToSilhouette(cleanMask(mask));
+}
+
+/** cleanMask 를 이미 거친 마스크 → 실루엣 (정리를 두 번 하지 않도록) */
+export function cleanedMaskToSilhouette(cleaned: Mask): Silhouette | null {
   let area = 0;
   for (let i = 0; i < cleaned.data.length; i++) area += cleaned.data[i];
   if (area === 0 || area / (cleaned.width * cleaned.height) < 0.01) return null;

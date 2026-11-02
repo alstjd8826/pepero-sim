@@ -308,3 +308,34 @@
   outline: 3px solid #e0a252;
   outline-offset: 2px;
 }
+
+/* 각인 미리보기: 흰 선(눌림) 높이맵을 뒤집어 쿠키 위에 그레이 선으로 겹친다 */
+.reliefOverlay {
+  filter: invert(1);
+  mix-blend-mode: multiply;
+  opacity: 0.85;
+}
+
+.reliefControl {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.sliderField {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: 15px;
+}
+
+.sliderValue {
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.slider {
+  width: 100%;
+  min-height: 32px;
+  accent-color: var(--choco);
+}

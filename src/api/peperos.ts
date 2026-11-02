@@ -1,6 +1,7 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { parseRecipe, type PeperoRecipe } from '@/src/recipe/types';
 import { validateNickname } from '@/src/lib/nickname';
+import { RELIEF_BUCKET, reliefKeyFor } from '@/src/recipe/relief';
 import { getSupabase } from './supabase';
 
 export type PeperoRow = {
@@ -63,13 +64,34 @@ function isStorageConflict(e: { message?: string; statusCode?: string | number }
   return String(e.statusCode) === '409' || /already exists|duplicate/i.test(e.message ?? '');
 }
 
+/** reliefs 버킷 업로드 실패 경고는 세션당 한 번만 (0002 마이그레이션 미적용 등) */
+let reliefWarned = false;
+
+/**
+ * 저장 순서: 썸네일 `thumbnails/{id}.png` → (각인이 있으면) `reliefs/{id}.png` → insert. 같은 id 를 쓴다.
+ * - 각인은 `relief` 로만 받는다. 입력 레시피에 섞여 온 shape.relief 는 버리고 이번 업로드 결과로 채운다
+ *   (DB CHECK 가 키 = `reliefs/{id}.png` 를 요구).
+ * - 각인 업로드가 409 가 아닌 이유로 실패하면(버킷 없음 등) 경고만 하고 각인 없이 저장한다.
+ *   썸네일 업로드 실패는 이전처럼 저장 실패.
+ */
 export async function savePepero(
-  input: { nickname: string; recipe: PeperoRecipe; thumbnail: Blob; isPublic: boolean },
+  input: {
+    nickname: string;
+    recipe: PeperoRecipe;
+    thumbnail: Blob;
+    isPublic: boolean;
+    /** 앞면 각인 높이맵 PNG. strength 0 이면 무시 */
+    relief?: { png: Blob; strength: number };
+  },
   client: SupabaseClient = getSupabase(),
 ): Promise<{ id: string }> {
   const nick = validateNickname(input.nickname);
   if (!nick.ok) throw new Error(`닉네임이 올바르지 않습니다: ${nick.reason}`);
-  const recipe = parseRecipe(input.recipe);
+  const parsed = parseRecipe(input.recipe);
+  const { relief: _ignored, ...plainShape } = parsed.shape;
+  void _ignored;
+  const strength = input.relief ? Math.min(1, Math.max(0, input.relief.strength)) : 0;
+  const reliefPng = strength > 0 ? input.relief?.png : undefined;
 
   let lastError: unknown;
   for (let attempt = 0; attempt < MAX_INSERT_ATTEMPTS; attempt++) {
@@ -87,10 +109,26 @@ export async function savePepero(
       throw new Error(up.error.message);
     }
 
+    let shape: PeperoRecipe['shape'] = plainShape;
+    if (reliefPng) {
+      const rel = await client.storage
+        .from(RELIEF_BUCKET)
+        .upload(path, reliefPng, { contentType: 'image/png', upsert: false });
+      if (!rel.error) {
+        shape = { ...plainShape, relief: { heightmapUrl: reliefKeyFor(id), strength } };
+      } else if (isStorageConflict(rel.error)) {
+        lastError = rel.error;
+        continue;
+      } else if (!reliefWarned) {
+        reliefWarned = true;
+        console.warn('[peperos] 각인 업로드 실패, 각인 없이 저장합니다', rel.error);
+      }
+    }
+
     const { error } = await client.from('peperos').insert({
       id,
       nickname: nick.value,
-      recipe,
+      recipe: { ...parsed, shape },
       is_public: input.isPublic,
     });
     if (!error) return { id };

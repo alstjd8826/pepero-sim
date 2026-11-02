@@ -1,15 +1,18 @@
 'use client';
 
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import * as THREE from 'three';
 import { useFrame } from '@react-three/fiber';
 import type { Coating, PeperoRecipe } from '@/src/recipe/types';
-import { buildCookieGeometry } from './cookieGeometry';
+import { resolveReliefUrl } from '@/src/recipe/relief';
+import { buildCookieGeometry, silhouettePlacement } from './cookieGeometry';
 import { stickTopFor } from './registry';
 import {
   createChocoShellMaterial,
   createCoatedMaterial,
   setCoatings,
   setDripProgress,
+  setRelief,
 } from './coatingMaterial';
 
 type Props = { recipe: PeperoRecipe; liveCoatings?: Coating[] };
@@ -37,10 +40,14 @@ const coatingKey = (c: Coating | undefined) => (c ? `${c.plane.offset}|${c.edgeS
 const easeOut = (t: number) => 1 - (1 - t) * (1 - t);
 
 function PeperoModelV1({ recipe, liveCoatings }: { recipe: PeperoRecipe; liveCoatings: Coating[] }) {
-  const { shape } = recipe;
+  const { silhouette, thickness, relief } = recipe.shape;
   const kind = recipe.base.kind;
 
-  const geometry = useMemo(() => buildCookieGeometry(shape, kind), [shape, kind]);
+  // 각인 강도만 바뀔 때(슬라이더) 지오메트리를 다시 만들지 않도록 실루엣·두께로만 memo
+  const geometry = useMemo(
+    () => buildCookieGeometry({ silhouette, thickness }, kind),
+    [silhouette, thickness, kind],
+  );
   useEffect(() => () => geometry.dispose(), [geometry]);
 
   const coatings = recipe.coatings;
@@ -64,6 +71,14 @@ function PeperoModelV1({ recipe, liveCoatings }: { recipe: PeperoRecipe; liveCoa
     },
     [material, shell],
   );
+
+  // 앞면 각인: 텍스처가 오기 전(또는 실패 시)엔 각인 없이 그린다. 셰이더는 그대로라 재컴파일 없음.
+  const reliefTexture = useReliefTexture(relief ? resolveReliefUrl(relief.heightmapUrl) : null);
+  const placement = useMemo(() => silhouettePlacement(silhouette, kind), [silhouette, kind]);
+  const reliefStrength = relief?.strength ?? 0;
+  useLayoutEffect(() => {
+    setRelief(material, { texture: reliefTexture, strength: reliefStrength, placement, thickness });
+  }, [material, reliefTexture, reliefStrength, placement, thickness]);
 
   // 흘러내림 애니메이션: 가장 최근 코팅이 '잠겨 있던 미리보기 → 확정'으로 바뀌거나 새로 늘어났을 때만 0→1
   const drip = useRef({ key: coatingKey(all[all.length - 1]), live: isLive, count: all.length, t: -1 });
@@ -101,4 +116,36 @@ function PeperoModelV1({ recipe, liveCoatings }: { recipe: PeperoRecipe; liveCoa
       <mesh geometry={geometry} material={shell} />
     </group>
   );
+}
+
+/** 높이맵 URL → 텍스처 (비동기). 로딩 중·실패·URL 없음이면 null. URL 이 바뀌면 이전 텍스처를 dispose. */
+function useReliefTexture(url: string | null): THREE.Texture | null {
+  const [loaded, setLoaded] = useState<{ url: string; texture: THREE.Texture } | null>(null);
+  useEffect(() => {
+    if (!url) return;
+    let alive = true;
+    let texture: THREE.Texture | null = null;
+    const loader = new THREE.TextureLoader();
+    loader.setCrossOrigin('anonymous');
+    loader.load(
+      url,
+      (t) => {
+        if (!alive) {
+          t.dispose();
+          return;
+        }
+        texture = t;
+        setLoaded({ url, texture: t });
+      },
+      undefined,
+      (err) => {
+        if (alive) console.warn('[pepero] 각인 높이맵을 불러오지 못했어요', err);
+      },
+    );
+    return () => {
+      alive = false;
+      texture?.dispose();
+    };
+  }, [url]);
+  return loaded && loaded.url === url ? loaded.texture : null;
 }

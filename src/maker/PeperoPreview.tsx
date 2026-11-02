@@ -80,9 +80,10 @@ function PreviewModel({ recipe, mode, onCaptureReady }: Required<Pick<Props, 'mo
   const { gl, scene, camera } = useThree();
 
   // 모양·막대가 바뀔 때만 다시 가운데 정렬(코팅은 셰이더라 바운딩 박스에 영향 없음)
-  const shape = recipe.shape;
+  // 각인 강도(슬라이더)만 바뀔 땐 다시 정렬하지 않는다 → 실루엣·두께·막대로만 key
+  const { silhouette, thickness } = recipe.shape;
   const kind = recipe.base.kind;
-  const cacheKey = useMemo(() => ({ shape, kind }), [shape, kind]);
+  const cacheKey = useMemo(() => ({ silhouette, thickness, kind }), [silhouette, thickness, kind]);
 
   const onCentered = useCallback(
     ({ boundingSphere }: OnCenterCallbackProps) => {

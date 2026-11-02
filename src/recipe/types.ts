@@ -11,7 +11,11 @@ export type PeperoRecipe = {
   shape: {
     silhouette: Silhouette; // 정규화 좌표
     thickness: number;
-    relief?: { heightmapUrl: string; strength: number }; // 앞면 각인 (없으면 매끈한 면)
+    /**
+     * 앞면 각인 (없으면 매끈한 면). heightmapUrl 은 외부 URL 이 아니라 이 프로젝트 Storage 키
+     * `reliefs/<id>.png` 다 — 렌더 시 resolveReliefUrl 로 공개 URL 을 만든다. strength 0~1.
+     */
+    relief?: { heightmapUrl: string; strength: number };
   };
   base: {
     kind: BaseKind; // 이후 'double-stick' 등 확장
@@ -29,6 +33,8 @@ export type Coating = PeperoRecipe['coatings'][number];
 
 export const MAX_OUTER_POINTS = 400;
 export const MAX_COATINGS = 50;
+/** 저장되는 각인 높이맵 키. 렌더러가 이 주소를 가져오므로 임의 URL 은 받지 않는다 (DB CHECK 와 같은 규칙). */
+export const RELIEF_KEY_RE = /^reliefs\/[A-Za-z0-9]{8}\.png$/;
 
 const vec2 = z.tuple([z.number().finite(), z.number().finite()]);
 
@@ -41,7 +47,10 @@ export const recipeSchema = z.object({
     }),
     thickness: z.number().positive(),
     relief: z
-      .object({ heightmapUrl: z.string(), strength: z.number() })
+      .object({
+        heightmapUrl: z.string().regex(RELIEF_KEY_RE),
+        strength: z.number().min(0).max(1),
+      })
       .optional(),
   }),
   base: z.object({

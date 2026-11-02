@@ -290,7 +290,77 @@ export type CookieMaterialUniforms = {
   uCount: { value: number };
   /** 가장 최근 레이어의 흘러내림 진행도 (0~1). 나머지 레이어는 항상 1. */
   uDripProgress: { value: number };
+  /** 앞면 각인 높이맵 (없으면 1×1 검정 자리표시) */
+  uReliefMap: { value: THREE.Texture };
+  /** 각인 강도 0~1. 0 이면 각인 없음 (깊이 = 강도 × RELIEF_DEPTH) */
+  uReliefStrength: { value: number };
+  /** (dx, dy, size, 앞면 판정 z): 로컬 (x,y) → 정규화 실루엣 = ((x,y) - (dx,dy)) / size */
+  uReliefXform: { value: THREE.Vector4 };
+  /** 높이맵 텍셀 크기 (1/폭, 1/높이) */
+  uReliefTexel: { value: THREE.Vector2 };
 };
+
+/* ───────────────────────── 앞면 각인 (spec 4.2.1) ─────────────────────────
+ * 높이맵(0 평면 ~ 1 깊게 눌림)을 앞면(+z, 로컬 법선 z > 0.5)에만 법선 섭동으로 입힌다 (정점 변위 없음).
+ * UV = 정규화 실루엣 좌표 + 0.5 (extractRelief 와 같은 bbox·정사각 규약). 뒷면·옆면은 매끈.
+ * 기울기는 텍셀 공간 중앙 차분 → 로컬 기울기(÷size) → 로컬 법선 (k·Hx, k·Hy, 1) → 뷰 공간.
+ * 셰이더는 항상 각인 경로를 포함하고(재컴파일 없음) uReliefStrength = 0 이면 아무 일도 하지 않는다.
+ */
+/** 강도 1 일 때 눌림 깊이 (모델 단위) */
+export const RELIEF_DEPTH = 0.05;
+/** 초코 셸 위로 비쳐 보이는 각인 비율 */
+const RELIEF_SHELL_FACTOR = 0.35;
+/** 눌린 곳 음영 (그늘) 세기 */
+const RELIEF_SHADE = 0.22;
+
+let placeholder: THREE.DataTexture | null = null;
+/** 각인이 없을 때 쓰는 공용 1×1 검정 텍스처 (dispose 하지 않는다) */
+export function reliefPlaceholder(): THREE.DataTexture {
+  if (!placeholder) {
+    placeholder = new THREE.DataTexture(new Uint8Array([0, 0, 0, 255]), 1, 1);
+    placeholder.needsUpdate = true;
+  }
+  return placeholder;
+}
+
+const RELIEF_VERTEX_PARS = /* glsl */ `
+uniform vec4 uReliefXform;
+varying vec2 vReliefUv;
+varying float vReliefFront;
+varying vec3 vReliefT;
+varying vec3 vReliefB;`;
+
+const RELIEF_VERTEX = /* glsl */ `
+vReliefUv = (position.xy - uReliefXform.xy) / uReliefXform.z + 0.5;
+vReliefFront = (normal.z > 0.5 && position.z > uReliefXform.w) ? 1.0 : 0.0;
+vReliefT = normalize(normalMatrix * vec3(1.0, 0.0, 0.0));
+vReliefB = normalize(normalMatrix * vec3(0.0, 1.0, 0.0));`;
+
+const RELIEF_FRAGMENT_PARS = /* glsl */ `
+uniform sampler2D uReliefMap;
+uniform float uReliefStrength;
+uniform vec4 uReliefXform;
+uniform vec2 uReliefTexel;
+varying vec2 vReliefUv;
+varying float vReliefFront;
+varying vec3 vReliefT;
+varying vec3 vReliefB;
+bool reliefActive() {
+  return uReliefStrength > 0.0 && vReliefFront > 0.5 &&
+    all(greaterThanEqual(vReliefUv, vec2(0.0))) && all(lessThanEqual(vReliefUv, vec2(1.0)));
+}
+float reliefHeight(vec2 uv) { return texture2D(uReliefMap, uv).r; }
+// 뷰 공간 법선 n 을 각인 기울기로 섭동. factor = 깊이 배율 (셸은 일부만)
+vec3 reliefPerturb(vec3 n, float factor) {
+  vec2 e = uReliefTexel * 1.5;
+  float hx = reliefHeight(vReliefUv + vec2(e.x, 0.0)) - reliefHeight(vReliefUv - vec2(e.x, 0.0));
+  float hy = reliefHeight(vReliefUv + vec2(0.0, e.y)) - reliefHeight(vReliefUv - vec2(0.0, e.y));
+  float k = uReliefStrength * ${glslFloat(RELIEF_DEPTH)} * factor / uReliefXform.z;
+  // 표면 z = -k·H → 로컬 법선 (k·dH/dx, k·dH/dy, 1)
+  vec2 g = k * vec2(hx / (2.0 * e.x), hy / (2.0 * e.y));
+  return normalize(vReliefT * g.x + vReliefB * g.y + n);
+}`;
+
 
 const COOKIE_BASE = '#d9a066';
 const COOKIE_EDGE = '#a8662e';
@@ -301,13 +371,15 @@ const LOCAL_VARYINGS_VERTEX = (shader: THREE.WebGLProgramParametersWithUniforms,
       '#include <common>',
       `#include <common>
 varying vec3 vLocalPos;
-varying vec3 vLocalNormal;`,
+varying vec3 vLocalNormal;
+${RELIEF_VERTEX_PARS}`,
     )
     .replace(
       '#include <begin_vertex>',
       `#include <begin_vertex>
 vLocalPos = position;
 vLocalNormal = normal;
+${RELIEF_VERTEX}
 ${extra}`,
     );
 };
@@ -330,6 +402,10 @@ export function createCookieMaterial(maxLayers = MAX_COATING_LAYERS): THREE.Mesh
     uEdge: { value: packed.edges },
     uCount: { value: 0 },
     uDripProgress: { value: 1 },
+    uReliefMap: { value: reliefPlaceholder() },
+    uReliefStrength: { value: 0 },
+    uReliefXform: { value: new THREE.Vector4(0, 0, 1, 0) },
+    uReliefTexel: { value: new THREE.Vector2(1, 1) },
   };
   material.userData.coatingUniforms = uniforms;
   material.userData.packed = packed;
@@ -344,6 +420,7 @@ export function createCookieMaterial(maxLayers = MAX_COATING_LAYERS): THREE.Mesh
         '#include <common>',
         `#include <common>
 ${COATING_PARS}
+${RELIEF_FRAGMENT_PARS}
 uniform vec3 uCookieEdge;
 float cookieHash(vec3 p) {
   return fract(sin(dot(p, vec3(12.9898, 78.233, 37.719))) * 43758.5453);
@@ -360,6 +437,8 @@ ${COATING_FRAGMENT}
   vec3 baked = mix(diffuseColor.rgb, uCookieEdge, edge * 0.85);
   float grain = cookieHash(floor(vLocalPos * 40.0)) - 0.5;
   baked *= 1.0 + grain * 0.12;
+  // 각인: 눌린 바닥은 살짝 그늘 (색이 아니라 음영만)
+  if (reliefActive()) baked *= 1.0 - ${glslFloat(RELIEF_SHADE)} * uReliefStrength * reliefHeight(vReliefUv);
   diffuseColor.rgb = baked;
 }
 if (coatIndex >= 0) diffuseColor.rgb = uColors[coatIndex];
@@ -370,6 +449,11 @@ else diffuseColor.rgb *= mix(0.6, 1.0, smoothstep(0.0, 0.035, coatGap));`,
         '#include <roughnessmap_fragment>',
         `#include <roughnessmap_fragment>
 if (coatIndex >= 0) roughnessFactor = uRoughness[coatIndex];`,
+      )
+      .replace(
+        '#include <normal_fragment_maps>',
+        `#include <normal_fragment_maps>
+if (reliefActive()) normal = reliefPerturb(normal, 1.0);`,
       );
   };
   material.customProgramCacheKey = () => `pepero-cookie-${MAX_COATING_LAYERS}`;
@@ -424,6 +508,7 @@ varying vec3 vUpView;`,
         '#include <common>',
         `#include <common>
 ${COATING_PARS}
+${RELIEF_FRAGMENT_PARS}
 varying vec3 vUpView;`,
       )
       .replace(
@@ -445,6 +530,8 @@ roughnessFactor = uRoughness[coatIndex] * (1.0 - 0.25 * coatRim);`,
       .replace(
         '#include <normal_fragment_maps>',
         `#include <normal_fragment_maps>
+// 각인이 초코 아래로 은은하게 비친다
+if (reliefActive()) normal = reliefPerturb(normal, ${glslFloat(RELIEF_SHELL_FACTOR)});
 // 경계 가장자리는 둥글게 말린 립: 법선을 모델 위(+y) 쪽으로 기울여 두께가 하이라이트로 보이게
 normal = normalize(normal + vUpView * coatRim * 1.4);
 {
@@ -484,6 +571,29 @@ export function setCoatings(
 export function setDripProgress(material: THREE.MeshStandardMaterial, progress: number): void {
   const uniforms = material.userData.coatingUniforms as CookieMaterialUniforms;
   uniforms.uDripProgress.value = Math.min(1, Math.max(0, progress));
+}
+
+export type ReliefParams = {
+  /** null 이면 각인 없음 (자리표시 텍스처) */
+  texture: THREE.Texture | null;
+  strength: number;
+  placement: { dx: number; dy: number; size: number };
+  /** 쿠키 두께: 앞면(z = thickness/2) 판정용 */
+  thickness: number;
+};
+
+/** 각인 uniform 을 제자리 갱신 (재컴파일 없음). 셸은 같은 uniform 을 공유하므로 자동 반영. */
+export function setRelief(material: THREE.MeshStandardMaterial, p: ReliefParams): void {
+  const u = material.userData.coatingUniforms as CookieMaterialUniforms;
+  const tex = p.texture;
+  const img = tex?.image as { width?: number; height?: number } | undefined;
+  const w = img?.width || 256;
+  const h = img?.height || 256;
+  u.uReliefMap.value = tex ?? reliefPlaceholder();
+  u.uReliefStrength.value = tex ? Math.min(1, Math.max(0, p.strength)) : 0;
+  // 앞면 판정: 앞면 캡(z = thickness/2) 근처만. 막대가 앞면보다 튀어나온 부분은 대부분 걸러진다.
+  u.uReliefXform.value.set(p.placement.dx, p.placement.dy, p.placement.size, p.thickness / 2 - 0.01);
+  u.uReliefTexel.value.set(1 / w, 1 / h);
 }
 
 /** 처음부터 코팅이 들어간 머티리얼. 첫 프레임부터 코팅이 보이도록 uniform 을 생성 시점에 채운다. */

@@ -1,12 +1,22 @@
 'use client';
 
-import { useCallback, useMemo, useRef, useState, type ChangeEvent, type FormEvent } from 'react';
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ChangeEvent,
+  type FormEvent,
+} from 'react';
 import dynamic from 'next/dynamic';
 import Link from 'next/link';
 import { imageToSilhouette } from '@/src/silhouette/pipeline';
 import type { Mask } from '@/src/silhouette/raster';
 import { createRecipe } from '@/src/recipe/defaults';
-import type { Coating, Silhouette } from '@/src/recipe/types';
+import type { Coating, PeperoRecipe, Silhouette } from '@/src/recipe/types';
+import { DEFAULT_RELIEF_STRENGTH } from '@/src/recipe/relief';
+import { extractRelief, isReliefEmpty, reliefToPngBlob } from '@/src/silhouette/relief';
 import { savePepero } from '@/src/api/peperos';
 import { NICKNAME_MAX, validateNickname, type NicknameResult } from '@/src/lib/nickname';
 import { ShareButtons } from '@/src/share/ShareButtons';
@@ -39,6 +49,15 @@ const NICKNAME_ERROR: Record<Extract<NicknameResult, { ok: false }>['reason'], s
 
 const SAVE_ERROR = '저장하지 못했어요. 잠시 후 다시 시도해 주세요.';
 
+/** 각인 높이맵 한 변 (spec 4.2.1) */
+const RELIEF_SIZE = 256;
+/** 연속 업로드 시 각인 계산을 몰아서 한 번만 (업로드 직후 화면 전환을 막지 않게 뒤로 미룬다) */
+const RELIEF_DEBOUNCE_MS = 120;
+
+/** 저장 전 로컬 각인: PNG 는 저장 때 올리고, url 은 미리보기용 object URL (교체 시 revoke) */
+type LocalRelief = { png: Blob; url: string };
+type ReliefStatus = 'idle' | 'working' | 'ready' | 'empty' | 'failed';
+
 export function MakerFlow() {
   const [step, setStep] = useState<StepId>('upload');
 
@@ -49,6 +68,27 @@ export function MakerFlow() {
   const [silhouette, setSilhouette] = useState<Silhouette | null>(null);
   /** 각인(이후 태스크)용 원본 파생물. 화면 상태에만 두고 절대 업로드하지 않는다. */
   const sourceRef = useRef<{ mask: Mask; image: ImageData } | null>(null);
+
+  // 각인
+  const [relief, setRelief] = useState<LocalRelief | null>(null);
+  const [reliefStatus, setReliefStatus] = useState<ReliefStatus>('idle');
+  const [reliefStrength, setReliefStrength] = useState(DEFAULT_RELIEF_STRENGTH);
+  const reliefTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const reliefUrlRef = useRef<string | null>(null);
+
+  const replaceRelief = useCallback((next: LocalRelief | null) => {
+    if (reliefUrlRef.current) URL.revokeObjectURL(reliefUrlRef.current);
+    reliefUrlRef.current = next?.url ?? null;
+    setRelief(next);
+  }, []);
+
+  useEffect(
+    () => () => {
+      if (reliefTimer.current) clearTimeout(reliefTimer.current);
+      if (reliefUrlRef.current) URL.revokeObjectURL(reliefUrlRef.current);
+    },
+    [],
+  );
 
   // 모양·담그기
   const [hasStick, setHasStick] = useState(true);
@@ -74,6 +114,15 @@ export function MakerFlow() {
     () => (baseRecipe ? { ...baseRecipe, coatings } : null),
     [baseRecipe, coatings],
   );
+  // 화면용 레시피: 저장 전 각인은 로컬 object URL 로 미리 본다. 저장할 땐 recipe(각인 없음) + relief PNG 를 따로 넘긴다.
+  const activeStrength = relief ? reliefStrength : 0;
+  const viewRecipe = useMemo<PeperoRecipe | null>(() => {
+    if (!recipe || !relief || activeStrength <= 0) return recipe;
+    return {
+      ...recipe,
+      shape: { ...recipe.shape, relief: { heightmapUrl: relief.url, strength: activeStrength } },
+    };
+  }, [recipe, relief, activeStrength]);
 
   const resetDip = useCallback(() => {
     setCoatings([]);
@@ -86,6 +135,32 @@ export function MakerFlow() {
       captureRef.current = null;
     }
     setStep(s);
+  };
+
+  /** 업로드 결과로 각인 높이맵을 만든다. 디바운스 + 토큰으로 마지막 업로드만 반영. */
+  const scheduleRelief = (token: number) => {
+    if (reliefTimer.current) clearTimeout(reliefTimer.current);
+    replaceRelief(null);
+    setReliefStatus('working');
+    reliefTimer.current = setTimeout(async () => {
+      reliefTimer.current = null;
+      const src = sourceRef.current;
+      if (!src || token !== uploadToken.current) return;
+      try {
+        const data = extractRelief(src.image, src.mask, RELIEF_SIZE);
+        if (isReliefEmpty(data)) {
+          if (token === uploadToken.current) setReliefStatus('empty');
+          return;
+        }
+        const png = await reliefToPngBlob(data, RELIEF_SIZE);
+        if (token !== uploadToken.current) return;
+        replaceRelief({ png, url: URL.createObjectURL(png) });
+        setReliefStatus('ready');
+      } catch (err) {
+        console.warn('[maker] 각인 만들기 실패', err);
+        if (token === uploadToken.current) setReliefStatus('failed');
+      }
+    }, RELIEF_DEBOUNCE_MS);
   };
 
   const onFile = async (e: ChangeEvent<HTMLInputElement>) => {
@@ -110,6 +185,7 @@ export function MakerFlow() {
       return;
     }
     sourceRef.current = { mask: result.mask, image: result.image };
+    scheduleRelief(token);
     setSilhouette(result.silhouette);
     resetDip();
     setSavedId(null);
@@ -142,7 +218,13 @@ export function MakerFlow() {
     setSaving(true);
     try {
       const thumbnail = await capture();
-      const { id } = await savePepero({ nickname: nick.value, recipe, thumbnail, isPublic });
+      const { id } = await savePepero({
+        nickname: nick.value,
+        recipe,
+        thumbnail,
+        isPublic,
+        relief: relief && activeStrength > 0 ? { png: relief.png, strength: activeStrength } : undefined,
+      });
       setSavedId(id);
     } catch (err) {
       console.warn('[maker] 저장 실패', err);
@@ -214,19 +296,46 @@ export function MakerFlow() {
         </section>
       )}
 
-      {step === 'shape' && silhouette && recipe && (
+      {step === 'shape' && silhouette && viewRecipe && (
         <section className={styles.panel}>
           <div className={styles.shapeRow}>
             <figure className={styles.figure}>
-              <SilhouetteSvg silhouette={silhouette} />
-              <figcaption>찾은 모양</figcaption>
+              <SilhouetteSvg silhouette={silhouette} reliefUrl={relief?.url ?? null} />
+              <figcaption>{relief ? '찾은 모양과 각인' : '찾은 모양'}</figcaption>
             </figure>
             <figure className={styles.figure}>
               <div className={styles.preview3d}>
-                <PeperoPreview recipe={recipe} />
+                <PeperoPreview recipe={viewRecipe} />
               </div>
               <figcaption>3D 쿠키</figcaption>
             </figure>
+          </div>
+          <div className={styles.reliefControl}>
+            <label className={styles.sliderField}>
+              <span>
+                앞면 각인{' '}
+                <output className={styles.sliderValue}>
+                  {reliefStrength <= 0 ? '없음' : `${Math.round(reliefStrength * 100)}%`}
+                </output>
+              </span>
+              <input
+                type="range"
+                min={0}
+                max={1}
+                step={0.05}
+                value={reliefStrength}
+                onChange={(e) => setReliefStrength(Number(e.target.value))}
+                disabled={!relief}
+                className={styles.slider}
+                data-testid="relief-strength"
+              />
+            </label>
+            <p className={styles.hint} aria-live="polite">
+              {reliefStatus === 'working' && '눈·입 같은 안쪽 선을 찾는 중…'}
+              {reliefStatus === 'ready' && '캐릭터의 안쪽 선을 쿠키 앞면에 꾹 눌러 찍어요. 0이면 매끈하게 구워요.'}
+              {reliefStatus === 'empty' && '안쪽 선을 찾지 못해서 각인 없이 구워요.'}
+              {reliefStatus === 'failed' && '각인을 만들지 못해서 각인 없이 구워요.'}
+            </p>
           </div>
           <label className={styles.toggle}>
             <input type="checkbox" checked={hasStick} onChange={toggleStick} data-testid="stick-toggle" />
@@ -243,11 +352,11 @@ export function MakerFlow() {
         </section>
       )}
 
-      {step === 'dip' && recipe && (
+      {step === 'dip' && viewRecipe && (
         <section className={styles.dipPanel}>
           <p className={styles.dipHint}>쿠키를 잡고 아래 초코 통에 담갔다 빼 보세요. 여러 번 해도 돼요.</p>
           <div className={styles.dipStage}>
-            <DipScene recipe={recipe} onChange={setCoatings} resetKey={resetKey} />
+            <DipScene recipe={viewRecipe} onChange={setCoatings} resetKey={resetKey} />
           </div>
           <div className={styles.dipBar}>
             <button type="button" className={styles.secondary} onClick={() => back && goTo(back)}>
@@ -263,10 +372,10 @@ export function MakerFlow() {
         </section>
       )}
 
-      {step === 'finish' && recipe && (
+      {step === 'finish' && viewRecipe && (
         <section className={styles.panel}>
           <div className={styles.finishPreview}>
-            <PeperoPreview recipe={recipe} mode="pose" onCaptureReady={onCaptureReady} />
+            <PeperoPreview recipe={viewRecipe} mode="pose" onCaptureReady={onCaptureReady} />
           </div>
           {savedId ? (
             <div className={styles.saved}>
@@ -342,13 +451,26 @@ export function MakerFlow() {
   );
 }
 
-function SilhouetteSvg({ silhouette }: { silhouette: Silhouette }) {
+/** 실루엣 + (있으면) 각인 미리보기. 각인 PNG 는 정규화 bbox 정사각형 [-0.5, 0.5]² 에 정확히 겹친다. */
+function SilhouetteSvg({ silhouette, reliefUrl }: { silhouette: Silhouette; reliefUrl: string | null }) {
   const toPath = (pts: [number, number][]) =>
     `M${pts.map(([x, y]) => `${x.toFixed(4)},${(-y).toFixed(4)}`).join('L')}Z`;
   const d = [silhouette.outer, ...(silhouette.holes ?? [])].map(toPath).join('');
   return (
     <svg className={styles.silhouette} viewBox="-0.6 -0.6 1.2 1.2" role="img" aria-label="찾은 실루엣">
       <path d={d} fillRule="evenodd" fill="#d9a066" stroke="#8a5a32" strokeWidth={0.012} />
+      {reliefUrl && (
+        <image
+          href={reliefUrl}
+          x={-0.5}
+          y={-0.5}
+          width={1}
+          height={1}
+          preserveAspectRatio="none"
+          className={styles.reliefOverlay}
+          data-testid="relief-preview"
+        />
+      )}
     </svg>
   );
 }

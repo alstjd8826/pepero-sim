@@ -9,22 +9,36 @@ function place(points: Vec2[], size: number, dx: number, dy: number): THREE.Vect
   return points.map(([x, y]) => new THREE.Vector2(x * size + dx, y * size + dy));
 }
 
+/**
+ * 정규화 실루엣 → 모델 로컬 배치: 로컬 (x, y) = (nx·size + dx, ny·size + dy).
+ * 스케일 후 bbox x 중심 = 0, 최저 y = silhouetteBottomY. 각인 UV 도 이 역변환을 쓴다.
+ */
+export function silhouettePlacement(
+  silhouette: PeperoRecipe['shape']['silhouette'],
+  kind: PeperoRecipe['base']['kind'],
+): { dx: number; dy: number; size: number } {
+  const spec = baseRegistry[kind];
+  let minX = Infinity, maxX = -Infinity, minY = Infinity;
+  for (const [x, y] of silhouette.outer) {
+    minX = Math.min(minX, x);
+    maxX = Math.max(maxX, x);
+    minY = Math.min(minY, y);
+  }
+  const size = spec.silhouetteSize;
+  return {
+    dx: -((minX + maxX) / 2) * size,
+    dy: spec.silhouetteBottomY - minY * size,
+    size,
+  };
+}
+
 export function buildCookieGeometry(
   shape: PeperoRecipe['shape'],
   kind: PeperoRecipe['base']['kind'],
 ): THREE.BufferGeometry {
   const spec = baseRegistry[kind];
   const { outer, holes } = shape.silhouette;
-
-  // 스케일 후 bbox x 중심 = 0, 최저 y = silhouetteBottomY 가 되도록 평행이동
-  let minX = Infinity, maxX = -Infinity, minY = Infinity;
-  for (const [x, y] of outer) {
-    minX = Math.min(minX, x);
-    maxX = Math.max(maxX, x);
-    minY = Math.min(minY, y);
-  }
-  const dx = -((minX + maxX) / 2) * spec.silhouetteSize;
-  const dy = spec.silhouetteBottomY - minY * spec.silhouetteSize;
+  const { dx, dy } = silhouettePlacement(shape.silhouette, kind);
 
   const s = new THREE.Shape(place(outer, spec.silhouetteSize, dx, dy));
   for (const h of holes ?? []) {
