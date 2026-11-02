@@ -15,6 +15,9 @@ export default function Home() {
   const [hasStick, setHasStick] = useState(true);
   const recipe = useMemo(() => createRecipe({ outer: circle }, hasStick), [hasStick]);
   const [coatings, setCoatings] = useState<Coating[]>([]);
+  const [resetKey, setResetKey] = useState(0);
+  // 부모가 확정 코팅을 레시피에 다시 넣어도(새 객체) 장면은 리셋되지 않아야 한다
+  const liveRecipe = useMemo(() => ({ ...recipe, coatings }), [recipe, coatings]);
 
   return (
     <main style={{ background: '#f5efe6', color: '#3b2a1e' }}>
@@ -23,9 +26,18 @@ export default function Home() {
           onClick={() => {
             setHasStick((v) => !v);
             setCoatings([]);
+            setResetKey((k) => k + 1);
           }}
         >
           {hasStick ? '막대 끄기' : '막대 켜기'}
+        </button>
+        <button
+          onClick={() => {
+            setCoatings([]);
+            setResetKey((k) => k + 1);
+          }}
+        >
+          처음부터
         </button>
         <span data-testid="coating-count">
           코팅 {coatings.length}번
@@ -33,7 +45,7 @@ export default function Home() {
         </span>
       </div>
       <div style={{ width: '100vw', height: '80vh' }}>
-        <DipScene recipe={recipe} onChange={setCoatings} />
+        <DipScene recipe={liveRecipe} onChange={setCoatings} resetKey={resetKey} />
       </div>
       {/* 페이지가 스크롤 가능한 상태에서도 캔버스 드래그가 스크롤을 일으키지 않는지 확인용 */}
       <p style={{ padding: 16, height: '60vh' }}>쿠키를 잡고 아래 초코 통에 담갔다 빼 보세요.</p>

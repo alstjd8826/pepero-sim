@@ -8,10 +8,12 @@ export type DipState = {
   currentDepth: number;
   /** 확정된 코팅 (기존 레시피 코팅 포함) */
   committed: Coating[];
+  /** 이번 담금의 경계 시드. 들어가는 순간 뽑아 미리보기와 확정 코팅에 같이 쓴다 (밖이면 null). */
+  pendingSeed: number | null;
 };
 
 export function initialDip(existing: Coating[]): DipState {
-  return { inChoco: false, currentDepth: 0, committed: existing };
+  return { inChoco: false, currentDepth: 0, committed: existing, pendingSeed: null };
 }
 
 function coatingAt(depth: number, edgeSeed: number): Coating {
@@ -37,19 +39,28 @@ export function stepDip(
 ): DipState {
   const depth = surfaceY - modelBottomY;
   if (depth > 0) {
-    return { ...s, inChoco: true, currentDepth: Math.max(s.inChoco ? s.currentDepth : 0, depth) };
+    if (!s.inChoco) return { ...s, inChoco: true, currentDepth: depth, pendingSeed: seed() };
+    return { ...s, currentDepth: Math.max(s.currentDepth, depth) };
   }
-  if (!s.inChoco) return s;
   // 빠져나오는 순간
+  return finishDip(s, seed);
+}
+
+/**
+ * 담금을 끝낸다 (표면 위로 빠져나옴, 또는 잠긴 채 포인터를 놓음).
+ * 이번 최대 깊이가 기존 최대 코팅 깊이보다 깊을 때만 새 코팅을 확정한다. 초코 밖이면 그대로 반환.
+ */
+export function finishDip(s: DipState, seed: () => number): DipState {
+  if (!s.inChoco) return s;
   const committed =
     s.currentDepth > maxCommittedDepth(s.committed)
-      ? [...s.committed, coatingAt(s.currentDepth, seed())]
+      ? [...s.committed, coatingAt(s.currentDepth, s.pendingSeed ?? seed())]
       : s.committed;
-  return { inChoco: false, currentDepth: 0, committed };
+  return { inChoco: false, currentDepth: 0, committed, pendingSeed: null };
 }
 
 /** 담그는 중 미리보기용 코팅. 기존 최대보다 깊이 들어가 있을 때만 의미가 있다. */
 export function liveCoating(s: DipState): Coating | null {
   if (!s.inChoco || s.currentDepth <= maxCommittedDepth(s.committed)) return null;
-  return coatingAt(s.currentDepth, 0);
+  return coatingAt(s.currentDepth, s.pendingSeed ?? 0);
 }

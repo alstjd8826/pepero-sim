@@ -3,11 +3,11 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import * as THREE from 'three';
 import { Canvas, useFrame, useThree } from '@react-three/fiber';
-import type { Coating, PeperoRecipe } from '@/src/recipe/types';
+import type { BaseKind, Coating, PeperoRecipe, Vec2 } from '@/src/recipe/types';
 import { PeperoModel } from '@/src/three/PeperoModel';
 import { BEVEL } from '@/src/three/cookieGeometry';
 import { STICK_RADIUS, baseRegistry, coatingRegistry } from '@/src/three/registry';
-import { initialDip, liveCoating, stepDip, type DipState } from './dipState';
+import { finishDip, initialDip, liveCoating, stepDip, type DipState } from './dipState';
 
 /*
  * 딥핑 장면.
@@ -29,22 +29,24 @@ type Props = {
   recipe: PeperoRecipe;
   /** 새 코팅이 확정될 때만 호출 (기존 코팅 포함 전체 목록) */
   onChange?: (coatings: Coating[]) => void;
+  /** 바뀌면 딥핑 상태를 initialDip(recipe.coatings) 로 되돌리고 쿠키를 처음 자리로 */
+  resetKey?: number | string;
 };
 
-/** 모양/베이스가 바뀔 때만 장면을 새로 시작한다. 코팅만 바뀐 레시피(onChange 반영)로는 리셋하지 않는다. */
-const objectIds = new WeakMap<object, number>();
-let nextObjectId = 0;
-function objectId(o: object): number {
-  let id = objectIds.get(o);
-  if (id === undefined) {
-    id = ++nextObjectId;
-    objectIds.set(o, id);
-  }
-  return id;
-}
+type RigProps = Omit<Props, 'resetKey'>;
 
-export function DipScene({ recipe, onChange }: Props) {
-  const key = `${objectId(recipe.shape)}-${objectId(recipe.base)}`;
+/**
+ * 쿠키를 직접 잡고 초코 통에 담그는 장면.
+ *
+ * Props 계약
+ * - `recipe.coatings` 는 마운트 시점과 `resetKey` 가 바뀐 시점에만 읽는다. 이후 코팅은 장면이 소유하며
+ *   `onChange` 로 알려 준다. 부모가 그 결과를 recipe 에 다시 넣어도(새 객체여도) 장면은 리셋되지 않는다.
+ * - `recipe.shape` / `recipe.base` 가 바뀌면 통·카메라 배치(내용 기준 서명)와 모델만 갱신되고 상태는 유지된다.
+ *   새 쿠키로 처음부터 하려면 `resetKey` 를 바꾼다. recipe 를 memo 하지 않아도 안전하다.
+ * - `onChange` 는 새 코팅이 확정될 때만 호출된다: 표면 위로 빠져나올 때, 또는 잠긴 채 포인터를 놓을 때
+ *   (놓으면 쿠키가 표면 위 처음 높이로 떠오른다).
+ */
+export function DipScene({ recipe, onChange, resetKey }: Props) {
   return (
     <div
       style={{
@@ -61,7 +63,7 @@ export function DipScene({ recipe, onChange }: Props) {
         <ambientLight intensity={0.7} />
         <directionalLight position={[3, 6, 5]} intensity={2} />
         <directionalLight position={[-4, 2, 3]} intensity={0.6} />
-        <DipRig key={key} recipe={recipe} onChange={onChange} />
+        <DipRig key={String(resetKey ?? '')} recipe={recipe} onChange={onChange} />
       </Canvas>
     </div>
   );
@@ -80,9 +82,8 @@ type Layout = {
   frameHalfW: number;
 };
 
-function computeLayout(recipe: PeperoRecipe): Layout {
-  const spec = baseRegistry[recipe.base.kind];
-  const { outer } = recipe.shape.silhouette;
+function computeLayout(kind: BaseKind, outer: Vec2[]): Layout {
+  const spec = baseRegistry[kind];
   let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
   for (const [x, y] of outer) {
     minX = Math.min(minX, x);
@@ -102,7 +103,7 @@ function computeLayout(recipe: PeperoRecipe): Layout {
     modelHeight,
     potRadius,
     potBottom,
-    silhouetteStart: recipe.base.kind === 'stick' ? spec.silhouetteBottomY : 0,
+    silhouetteStart: kind === 'stick' ? spec.silhouetteBottomY : 0,
     silhouetteHalfWidth,
     camBaseY: (top + bottom) / 2,
     frameHalfH: (top - bottom) / 2,
@@ -131,13 +132,21 @@ function randomSeed(): number {
   return crypto.getRandomValues(new Uint32Array(1))[0];
 }
 
-function DipRig({ recipe, onChange }: Props) {
+function DipRig({ recipe, onChange }: RigProps) {
   // three 객체는 렌더 중이 아니라 핸들러/이펙트 안에서 get() 으로 꺼내 변경한다.
   const get = useThree((s) => s.get);
   const gl = useThree((s) => s.gl);
   const size = useThree((s) => s.size);
 
-  const L = useMemo(() => computeLayout(recipe), [recipe]);
+  // 배치는 모양 '내용' 기준으로만 다시 계산 (recipe 객체가 매번 새로 와도 카메라가 흔들리지 않게)
+  const shapeSignature = useMemo(
+    () => JSON.stringify([recipe.base.kind, recipe.shape.silhouette.outer]),
+    [recipe.base.kind, recipe.shape.silhouette.outer],
+  );
+  const L = useMemo(() => {
+    const [kind, outer] = JSON.parse(shapeSignature) as [BaseKind, Vec2[]];
+    return computeLayout(kind, outer);
+  }, [shapeSignature]);
   const layoutRef = useRef(L);
   useLayoutEffect(() => {
     layoutRef.current = L;
@@ -192,12 +201,23 @@ function DipRig({ recipe, onChange }: Props) {
     applyCamera(groupRef.current?.position.y ?? START_Y);
   }, [get, size.width, size.height, L, applyCamera]);
 
+  // 잠긴 채 놓으면 쿠키를 처음 높이로 띄워 올린다 (다시 잡으면 즉시 중단)
+  const liftRef = useRef(false);
+
   // 흔들림(시각용): x 속도 → z 회전 스프링
   const sway = useRef({ vx: 0, angle: 0, angVel: 0, lastX: 0, lastT: 0 });
   useFrame((_, rawDt) => {
+    const dt = Math.min(rawDt, 1 / 30);
+    const g = groupRef.current;
+    if (liftRef.current && g) {
+      const y = g.position.y + (START_Y - g.position.y) * (1 - Math.exp(-dt * 9));
+      const done = START_Y - y < 0.005;
+      g.position.y = done ? START_Y : y;
+      applyCamera(g.position.y);
+      if (done) liftRef.current = false;
+    }
     const pivot = pivotRef.current;
     if (!pivot) return;
-    const dt = Math.min(rawDt, 1 / 30);
     const s = sway.current;
     s.vx *= Math.exp(-dt * 8);
     const target = THREE.MathUtils.clamp(-s.vx * 0.04, -MAX_SWAY, MAX_SWAY);
@@ -229,6 +249,7 @@ function DipRig({ recipe, onChange }: Props) {
       const g = groupRef.current;
       if (!g || !project(e)) return;
       e.preventDefault();
+      liftRef.current = false;
       activeId = e.pointerId;
       el.setPointerCapture(e.pointerId);
       el.style.cursor = 'grabbing';
@@ -242,11 +263,23 @@ function DipRig({ recipe, onChange }: Props) {
       sway.current.lastT = e.timeStamp;
     };
 
-    const onMove = (e: PointerEvent) => {
-      if (e.pointerId !== activeId) return;
-      const g = groupRef.current;
-      if (!g || !project(e)) return;
-      e.preventDefault();
+    /** 상태 전이 반영: 확정이 생기면 렌더 상태 갱신 + onChange, 미리보기는 깊이가 바뀔 때만 갱신 */
+    const applyDip = (next: DipState) => {
+      const prev = dipRef.current;
+      dipRef.current = next;
+      if (next.committed !== prev.committed) {
+        setCommitted(next.committed);
+        onChangeRef.current?.(next.committed);
+      }
+      const nextLive = liveCoating(next);
+      setLive((cur) =>
+        cur?.plane.offset === nextLive?.plane.offset && cur?.edgeSeed === nextLive?.edgeSeed ? cur : nextLive,
+      );
+    };
+
+    /** 포인터 샘플 하나만큼 쿠키를 옮기고 딥핑 상태를 한 단계 진행 */
+    const moveTo = (ev: PointerEvent, g: THREE.Group) => {
+      if (!project(ev)) return;
       const Lc = layoutRef.current;
       const prevY = g.position.y;
 
@@ -270,20 +303,22 @@ function DipRig({ recipe, onChange }: Props) {
       applyCamera(y);
 
       const s = sway.current;
-      const dt = Math.max((e.timeStamp - s.lastT) / 1000, 1 / 240);
+      const dt = Math.max((ev.timeStamp - s.lastT) / 1000, 1 / 240);
       s.vx = s.vx * 0.5 + ((x - s.lastX) / dt) * 0.5;
       s.lastX = x;
-      s.lastT = e.timeStamp;
+      s.lastT = ev.timeStamp;
 
-      const prev = dipRef.current;
-      const next = stepDip(prev, y, SURFACE_Y, randomSeed);
-      dipRef.current = next;
-      if (next.committed !== prev.committed) {
-        setCommitted(next.committed);
-        onChangeRef.current?.(next.committed);
-      }
-      const nextLive = liveCoating(next);
-      setLive((cur) => (cur?.plane.offset === nextLive?.plane.offset ? cur : nextLive));
+      applyDip(stepDip(dipRef.current, y, SURFACE_Y, randomSeed));
+    };
+
+    const onMove = (e: PointerEvent) => {
+      if (e.pointerId !== activeId) return;
+      const g = groupRef.current;
+      if (!g) return;
+      e.preventDefault();
+      // 프레임 사이에 합쳐진 샘플까지 모두 반영 → 빠르게 휙 담가도 가장 깊은 지점을 놓치지 않는다
+      const samples = e.getCoalescedEvents?.() ?? [];
+      for (const ev of samples.length ? samples : [e]) moveTo(ev, g);
     };
 
     const onUp = (e: PointerEvent) => {
@@ -291,6 +326,11 @@ function DipRig({ recipe, onChange }: Props) {
       activeId = null;
       el.style.cursor = '';
       if (el.hasPointerCapture(e.pointerId)) el.releasePointerCapture(e.pointerId);
+      // 잠긴 채 놓으면 이번 담금을 확정하고 표면 위로 띄운다
+      if (dipRef.current.inChoco) {
+        applyDip(finishDip(dipRef.current, randomSeed));
+        liftRef.current = true;
+      }
     };
 
     // iOS Safari 등 touch-action 을 무시하는 경우 대비

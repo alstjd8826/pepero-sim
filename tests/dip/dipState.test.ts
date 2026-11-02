@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { initialDip, liveCoating, stepDip, type DipState } from '@/src/dip/dipState';
+import { finishDip, initialDip, liveCoating, stepDip, type DipState } from '@/src/dip/dipState';
 import type { Coating } from '@/src/recipe/types';
 
 const SURFACE = 0;
@@ -74,7 +74,7 @@ describe('stepDip', () => {
   it('입력 상태를 변경하지 않는다', () => {
     const s0 = initialDip([]);
     const s1 = stepDip(s0, -1, SURFACE, makeSeed());
-    expect(s0).toEqual({ inChoco: false, currentDepth: 0, committed: [] });
+    expect(s0).toEqual({ inChoco: false, currentDepth: 0, committed: [], pendingSeed: null });
     expect(s1.inChoco).toBe(true);
     expect(s1.currentDepth).toBe(1);
   });
@@ -87,10 +87,45 @@ describe('liveCoating', () => {
     expect(live?.plane).toEqual({ normal: [0, -1, 0], offset: -0.7 });
   });
 
+  it('미리보기와 확정 코팅의 edgeSeed 가 같다 (뺄 때 경계가 바뀌지 않음)', () => {
+    const seed = makeSeed();
+    const dipping = run(initialDip([]), [1, -0.3, -0.7], seed);
+    const live = liveCoating(dipping);
+    const done = stepDip(dipping, 1, SURFACE, seed);
+    expect(live?.edgeSeed).toBe(1);
+    expect(done.committed[0].edgeSeed).toBe(live?.edgeSeed);
+  });
+
   it('밖에 있거나 기존보다 얕으면 null', () => {
     expect(liveCoating(initialDip([]))).toBeNull();
     const s = run(initialDip([]), [1, -1, 1, -0.5]);
     expect(s.inChoco).toBe(true);
     expect(liveCoating(s)).toBeNull();
+  });
+});
+
+describe('finishDip (잠긴 채 놓기)', () => {
+  it('기존보다 깊게 잠긴 상태면 확정하고 밖 상태로', () => {
+    const seed = makeSeed();
+    const s = finishDip(run(initialDip([]), [1, -0.8], seed), seed);
+    expect(s.inChoco).toBe(false);
+    expect(s.currentDepth).toBe(0);
+    expect(s.pendingSeed).toBeNull();
+    expect(s.committed).toHaveLength(1);
+    expect(s.committed[0].plane.offset).toBeCloseTo(-0.8);
+    expect(s.committed[0].edgeSeed).toBe(1);
+  });
+
+  it('기존보다 얕게 잠긴 상태면 새 층 없이 밖 상태로', () => {
+    const s0 = run(initialDip([]), [1, -1, 1, -0.4]);
+    const s = finishDip(s0, makeSeed());
+    expect(s.inChoco).toBe(false);
+    expect(s.committed).toBe(s0.committed);
+    expect(s.committed).toHaveLength(1);
+  });
+
+  it('초코 밖이면 그대로', () => {
+    const s0 = run(initialDip([]), [1, -1, 1]);
+    expect(finishDip(s0, makeSeed())).toBe(s0);
   });
 });
