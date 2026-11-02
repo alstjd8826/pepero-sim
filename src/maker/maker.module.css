@@ -315,27 +315,3 @@
   mix-blend-mode: multiply;
   opacity: 0.85;
 }
-
-.reliefControl {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-}
-
-.sliderField {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-  font-size: 15px;
-}
-
-.sliderValue {
-  color: var(--muted);
-  font-size: 13px;
-}
-
-.slider {
-  width: 100%;
-  min-height: 32px;
-  accent-color: var(--choco);
-}

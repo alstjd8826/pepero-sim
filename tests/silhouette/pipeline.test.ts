@@ -92,8 +92,12 @@ describe('computeScaledSize', () => {
   it('(d) 6000x4000 → 1024x683', () => {
     expect(computeScaledSize(6000, 4000, 1024)).toEqual({ width: 1024, height: 683 });
   });
-  it('세로가 길면 세로 기준, 작은 이미지는 키우지 않는다', () => {
+  it('세로가 길면 세로 기준', () => {
     expect(computeScaledSize(4000, 6000, 1024)).toEqual({ width: 683, height: 1024 });
-    expect(computeScaledSize(300, 200, 1024)).toEqual({ width: 300, height: 200 });
+  });
+  it('작은 이미지는 긴 변 1024 까지 키운다', () => {
+    expect(computeScaledSize(300, 200, 1024)).toEqual({ width: 1024, height: 683 });
+    expect(computeScaledSize(256, 256, 1024)).toEqual({ width: 1024, height: 1024 });
+    expect(computeScaledSize(1024, 500, 1024)).toEqual({ width: 1024, height: 500 });
   });
 });

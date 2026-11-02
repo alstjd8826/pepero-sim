@@ -21,7 +21,7 @@ function draw(bitmap: ImageBitmap, width: number, height: number): ImageData {
   return ctx.getImageData(0, 0, width, height);
 }
 
-/** 파일을 디코드하고 긴 변 maxSide 이하로 줄여 ImageData로 돌려준다. */
+/** 파일을 디코드하고 긴 변을 maxSide 에 맞춰(크면 줄이고 작으면 고품질 보간으로 키워) ImageData로 돌려준다. */
 export async function fileToImageData(file: Blob, maxSide = 1024): Promise<ImageData> {
   // 일부 브라우저 기본값이 'none'이라 세로 사진이 눕는 걸 막기 위해 명시한다.
   const bitmap = await createImageBitmap(file, { imageOrientation: 'from-image' });

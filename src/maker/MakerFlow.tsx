@@ -15,7 +15,7 @@ import { imageToSilhouette } from '@/src/silhouette/pipeline';
 import type { Mask } from '@/src/silhouette/raster';
 import { createRecipe } from '@/src/recipe/defaults';
 import type { Coating, PeperoRecipe, Silhouette } from '@/src/recipe/types';
-import { DEFAULT_RELIEF_STRENGTH } from '@/src/recipe/relief';
+import { RELIEF_STRENGTH } from '@/src/recipe/relief';
 import { extractRelief, isReliefEmpty, reliefToPngBlob } from '@/src/silhouette/relief';
 import { savePepero } from '@/src/api/peperos';
 import { NICKNAME_MAX, validateNickname, type NicknameResult } from '@/src/lib/nickname';
@@ -49,8 +49,8 @@ const NICKNAME_ERROR: Record<Extract<NicknameResult, { ok: false }>['reason'], s
 
 const SAVE_ERROR = '저장하지 못했어요. 잠시 후 다시 시도해 주세요.';
 
-/** 각인 높이맵 한 변 (spec 4.2.1) */
-const RELIEF_SIZE = 256;
+/** 각인 높이맵 한 변. 512 면 선이 또렷하고 PNG 는 보통 수십 KB (버킷 한도 128KB) */
+const RELIEF_SIZE = 512;
 /** 연속 업로드 시 각인 계산을 몰아서 한 번만 (업로드 직후 화면 전환을 막지 않게 뒤로 미룬다) */
 const RELIEF_DEBOUNCE_MS = 120;
 
@@ -72,7 +72,6 @@ export function MakerFlow() {
   // 각인
   const [relief, setRelief] = useState<LocalRelief | null>(null);
   const [reliefStatus, setReliefStatus] = useState<ReliefStatus>('idle');
-  const [reliefStrength, setReliefStrength] = useState(DEFAULT_RELIEF_STRENGTH);
   const reliefTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const reliefUrlRef = useRef<string | null>(null);
 
@@ -115,7 +114,7 @@ export function MakerFlow() {
     [baseRecipe, coatings],
   );
   // 화면용 레시피: 저장 전 각인은 로컬 object URL 로 미리 본다. 저장할 땐 recipe(각인 없음) + relief PNG 를 따로 넘긴다.
-  const activeStrength = relief ? reliefStrength : 0;
+  const activeStrength = relief ? RELIEF_STRENGTH : 0;
   const viewRecipe = useMemo<PeperoRecipe | null>(() => {
     if (!recipe || !relief || activeStrength <= 0) return recipe;
     return {
@@ -310,33 +309,12 @@ export function MakerFlow() {
               <figcaption>3D 쿠키</figcaption>
             </figure>
           </div>
-          <div className={styles.reliefControl}>
-            <label className={styles.sliderField}>
-              <span>
-                앞면 각인{' '}
-                <output className={styles.sliderValue}>
-                  {reliefStrength <= 0 ? '없음' : `${Math.round(reliefStrength * 100)}%`}
-                </output>
-              </span>
-              <input
-                type="range"
-                min={0}
-                max={1}
-                step={0.05}
-                value={reliefStrength}
-                onChange={(e) => setReliefStrength(Number(e.target.value))}
-                disabled={!relief}
-                className={styles.slider}
-                data-testid="relief-strength"
-              />
-            </label>
-            <p className={styles.hint} aria-live="polite">
-              {reliefStatus === 'working' && '눈·입 같은 안쪽 선을 찾는 중…'}
-              {reliefStatus === 'ready' && '캐릭터의 안쪽 선을 쿠키 앞면에 꾹 눌러 찍어요. 0이면 매끈하게 구워요.'}
-              {reliefStatus === 'empty' && '안쪽 선을 찾지 못해서 각인 없이 구워요.'}
-              {reliefStatus === 'failed' && '각인을 만들지 못해서 각인 없이 구워요.'}
-            </p>
-          </div>
+          <p className={styles.hint} aria-live="polite">
+            {reliefStatus === 'working' && '색과 선을 찾아 쿠키 앞면에 새기는 중…'}
+            {reliefStatus === 'ready' && '캐릭터의 선과 색 경계를 쿠키 앞면에 꾹 눌러 찍었어요.'}
+            {reliefStatus === 'empty' && '새길 선을 찾지 못해서 매끈하게 구워요.'}
+            {reliefStatus === 'failed' && '각인을 만들지 못해서 매끈하게 구워요.'}
+          </p>
           <label className={styles.toggle}>
             <input type="checkbox" checked={hasStick} onChange={toggleStick} data-testid="stick-toggle" />
             <span>막대 꽂기 {hasStick ? '(막대 끝부터 담가요)' : '(쿠키만, 더 크게)'}</span>

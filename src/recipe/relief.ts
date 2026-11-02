@@ -1,8 +1,8 @@
 import { RELIEF_KEY_RE } from './types';
 
 export const RELIEF_BUCKET = 'reliefs';
-/** 각인 기본 강도 (슬라이더 초기값) */
-export const DEFAULT_RELIEF_STRENGTH = 0.6;
+/** 각인 강도. 사용자 조절 없이 100% 고정 */
+export const RELIEF_STRENGTH = 1;
 
 /** 저장 id → 레시피에 넣는 높이맵 키 */
 export function reliefKeyFor(id: string): string {

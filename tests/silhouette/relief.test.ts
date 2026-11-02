@@ -63,6 +63,64 @@ describe('extractRelief', () => {
     }
   });
 
+  it('밝기가 비슷한 두 색(빨강/초록)의 경계도 각인된다', () => {
+    // 휘도 ≈ 같음: 빨강(200,90,90) L≈0.47, 초록(60,140,60) L≈0.47 (그레이로는 구분 불가)
+    const img = makeImage(W, W, (x, y) =>
+      inDisc(x, y) ? (x < C ? [200, 90, 90, 255] : [60, 140, 60, 255]) : [0, 0, 0, 0],
+    );
+    const mask = makeMask(W, W, inDisc);
+    const size = 128;
+    const out = extractRelief(img, mask, size);
+    const mid = size / 2;
+    for (const y of [mid - 30, mid, mid + 30]) {
+      expect(Math.max(out[y * size + mid - 1], out[y * size + mid])).toBeGreaterThan(128);
+    }
+    // 각 색 영역 안쪽은 평평
+    expect(out[mid * size + mid - 25]).toBe(0);
+    expect(out[mid * size + mid + 25]).toBe(0);
+  });
+
+  it('색 면(분홍 볼)은 테두리만 각인되고 안쪽은 평평하다', () => {
+    const inCheek = (x: number, y: number) => (x - C) ** 2 + (y - C) ** 2 <= 40 * 40;
+    const img = makeImage(W, W, (x, y) =>
+      inDisc(x, y) ? (inCheek(x, y) ? [245, 170, 180, 255] : [255, 242, 217, 255]) : [0, 0, 0, 0],
+    );
+    const mask = makeMask(W, W, inDisc);
+    const size = 200; // bbox 200px → 1:1
+    const out = extractRelief(img, mask, size);
+    const c = size / 2;
+    expect(out[c * size + c]).toBe(0); // 볼 한가운데
+    // 볼 테두리(반지름 40) 근처에 선
+    let hit = 0;
+    for (let dx = 37; dx <= 43; dx++) if (out[c * size + c + dx] > 128) hit++;
+    expect(hit).toBeGreaterThan(0);
+  });
+
+  it('검은 선은 한 줄로 찍히고 양옆에 이중선이 생기지 않는다', () => {
+    const img = makeImage(W, W, (x, y) =>
+      inDisc(x, y) ? (onLine(x) ? [0, 0, 0, 255] : [255, 242, 217, 255]) : [0, 0, 0, 0],
+    );
+    const mask = makeMask(W, W, inDisc);
+    const size = 200;
+    const out = extractRelief(img, mask, size);
+    const c = size / 2;
+    expect(Math.max(out[c * size + c - 1], out[c * size + c])).toBeGreaterThan(128);
+    for (const dx of [6, 8, 12]) {
+      expect(out[c * size + c - 1 - dx]).toBe(0);
+      expect(out[c * size + c + dx]).toBe(0);
+    }
+  });
+
+  it('JPEG 잡음 정도의 단색 면은 각인되지 않는다', () => {
+    const img = makeImage(W, W, (x, y) => {
+      if (!inDisc(x, y)) return [0, 0, 0, 0];
+      const n = ((x * 31 + y * 17) % 9) - 4;
+      return [250 + n, 238 + n, 212 + n, 255];
+    });
+    const out = extractRelief(img, makeMask(W, W, inDisc), 128);
+    expect(out.every((v) => v === 0)).toBe(true);
+  });
+
   it('마스크가 비면 전부 0', () => {
     const img = makeImage(16, 16, () => [0, 0, 0, 255]);
     const out = extractRelief(img, makeMask(16, 16, () => false), 32);
