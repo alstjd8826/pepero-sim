@@ -60,8 +60,15 @@ export const recipeSchema = z.object({
       }),
     )
     .max(MAX_COATINGS),
-  toppings: z.array(z.never()),
-}) as unknown as z.ZodType<PeperoRecipe>;
+  toppings: z.array(z.never()) as z.ZodType<never[]>,
+});
+
+// 스키마와 타입이 어긋나면 tsc 가 실패한다 (양방향 대입 검사).
+type Inferred = z.infer<typeof recipeSchema>;
+const _schemaToType = (v: Inferred): PeperoRecipe => v;
+const _typeToSchema = (v: PeperoRecipe): Inferred => v;
+void _schemaToType;
+void _typeToSchema;
 
 export function parseRecipe(json: unknown): PeperoRecipe {
   return recipeSchema.parse(json);
