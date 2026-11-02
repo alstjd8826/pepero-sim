@@ -3,6 +3,7 @@ import type { Coating } from '@/src/recipe/types';
 import {
   MAX_COATING_LAYERS,
   createCookieMaterial,
+  edgeOffset,
   isCoated,
   packCoatingUniforms,
 } from '@/src/three/coatingMaterial';
@@ -23,12 +24,16 @@ describe('isCoated', () => {
     expect(isCoated([0, 0.5, 0], [])).toBeNull();
   });
 
-  it('경계(y == depth)는 코팅 (>= 규칙)', () => {
-    expect(isCoated([0, 1.0, 0], [dip(1.0)])).toBe('milk-choco');
+  it('경계(y == depth + edgeOffset)는 코팅 (>= 규칙)', () => {
+    // 경계는 물결·흘러내림만큼 depth 에서 [-0.35, 0.06] 벗어난다 (edgeOffset, 진행도 1)
+    const edge = 1.0 + edgeOffset(0, 0, 0);
+    expect(isCoated([0, edge, 0], [dip(1.0)])).toBe('milk-choco');
+    expect(isCoated([0, edge + 1e-6, 0], [dip(1.0)])).toBeNull();
   });
 
   it('여러 레이어 중 하나라도 덮으면 코팅', () => {
-    expect(isCoated([0, 1.8, 0], [dip(2.0), dip(0.5)])).toBe('milk-choco');
+    // 경계 보정 범위 [-0.35, 0.06] 밖으로 떨어진 점만 쓴다 (2.0 - 0.35 = 1.65)
+    expect(isCoated([0, 1.6, 0], [dip(2.0), dip(0.5)])).toBe('milk-choco');
     expect(isCoated([0, 2.5, 0], [dip(2.0), dip(0.5)])).toBeNull();
   });
 
@@ -63,6 +68,19 @@ describe('packCoatingUniforms', () => {
     expect(colors[0].getHexString()).toBe('4a2716');
   });
 
+  it('edgeSeed 는 float32 에 정확히 들어가는 [0,1) 값으로 줄여 넣는다', async () => {
+    const { seedUnit } = await import('@/src/three/coatingMaterial');
+    const { edges } = packCoatingUniforms([dip(2.0, 4294967295), dip(4.5, 7)], undefined, 3.8);
+    expect(edges).toHaveLength(16);
+    expect(edges[0].x).toBe(seedUnit(4294967295));
+    expect(Math.fround(edges[0].x)).toBe(edges[0].x);
+    expect(edges[0].x).toBeGreaterThanOrEqual(0);
+    expect(edges[0].x).toBeLessThan(1);
+    // 막대 구간(depth 2.0 < 3.8)은 radial, 쿠키 구간(4.5)은 평면
+    expect(edges[0].y).toBe(1);
+    expect(edges[1].y).toBe(0);
+  });
+
   it('16개 초과면 마지막 16개(최신)만 쓴다', () => {
     const many = Array.from({ length: 20 }, (_, i) => dip(i + 1));
     const { planes, count } = packCoatingUniforms(many);
@@ -87,7 +105,24 @@ describe('createCookieMaterial', () => {
     expect(u.uPlanes.value).toHaveLength(16);
     expect(u.uColors.value).toHaveLength(16);
     expect(u.uCount.value).toBe(0);
+    expect(u.uDripProgress.value).toBe(1);
     m.dispose();
+  });
+
+  it('초코 셸은 베이스와 같은 uniform 객체를 공유한다 (setCoatings 한 번으로 둘 다 반영)', async () => {
+    const { createChocoShellMaterial, setCoatings, setDripProgress } = await import(
+      '@/src/three/coatingMaterial'
+    );
+    const base = createCookieMaterial();
+    const shell = createChocoShellMaterial(base);
+    expect(shell.userData.coatingUniforms).toBe(base.userData.coatingUniforms);
+    setCoatings(base, [dip(1.0)]);
+    setDripProgress(base, 0.25);
+    expect(shell.userData.coatingUniforms.uCount.value).toBe(1);
+    expect(shell.userData.coatingUniforms.uDripProgress.value).toBe(0.25);
+    expect(shell.roughness).toBe(0.35);
+    base.dispose();
+    shell.dispose();
   });
 });
 
