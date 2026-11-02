@@ -165,7 +165,8 @@
 
 .shapeRow {
   display: grid;
-  grid-template-columns: 1fr 1fr;
+  /* minmax(0, …): 3D 캔버스의 픽셀 폭이 칸을 넓혀 옆 그림을 밀어내지 않게 */
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 10px;
 }
 
