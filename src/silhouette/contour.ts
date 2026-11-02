@@ -1,6 +1,6 @@
 import { MAX_OUTER_POINTS, type Silhouette, type Vec2 } from '@/src/recipe/types';
 import { largestComponent, morphClose, morphOpen, type Mask } from './raster';
-import { chaikin, normalizeSilhouette, simplifyClosedDP } from './simplify';
+import { chaikin, normalizeSilhouette, polygonArea, polygonSelfIntersects, simplifyClosedDP } from './simplify';
 
 // 방향: 0=오른쪽(+x) 1=아래(+y) 2=왼쪽 3=위 (이미지 좌표, y↓)
 const DX = [1, 0, -1, 0];
@@ -55,13 +55,35 @@ export function maskToSilhouette(mask: Mask): Silhouette | null {
   if (area === 0 || area / (cleaned.width * cleaned.height) < 0.01) return null;
 
   const contour = traceOuterContour(cleaned);
-  let eps = 1.5;
-  let pts: Vec2[] = [];
-  for (let attempt = 0; attempt < 20; attempt++) {
-    pts = chaikin(simplifyClosedDP(contour, eps), 2);
-    if (pts.length <= MAX_OUTER_POINTS) break;
-    eps *= 1.5;
+  const build = (eps: number, iters: number) => chaikin(simplifyClosedDP(contour, eps), iters);
+
+  // 1) 점 수 상한: eps 를 6px 까지 올리고, 그래도 넘으면 chaikin 반복을 줄이고, 그 뒤에야 eps 를 더 올린다.
+  const EPS_CEILING = 6;
+  const plan: [number, number][] = [];
+  for (let e = 1.5; e < EPS_CEILING; e *= 1.5) plan.push([e, 2]);
+  plan.push([EPS_CEILING, 2], [EPS_CEILING, 1], [EPS_CEILING, 0]);
+  for (let e = EPS_CEILING * 1.5, k = 0; k < 20; e *= 1.5, k++) plan.push([e, 0]);
+
+  let chosen: [number, number] | null = null;
+  for (const [e, it] of plan) {
+    if (build(e, it).length <= MAX_OUTER_POINTS) { chosen = [e, it]; break; }
   }
-  if (pts.length < 3 || pts.length > MAX_OUTER_POINTS) return null;
-  return { outer: normalizeSilhouette(pts) };
+  if (!chosen) return null;
+
+  // 2) 위상: 자기교차하면 eps 를 절반씩(최소 0.75px) 줄여 재시도, 실패하면 null.
+  let pts: Vec2[] | null = null;
+  for (let e = chosen[0]; e >= 0.75; e /= 2) {
+    const cand = build(e, chosen[1]);
+    if (cand.length > MAX_OUTER_POINTS) continue;
+    if (!polygonSelfIntersects(cand)) { pts = cand; break; }
+  }
+  if (!pts || pts.length < 3) return null;
+
+  // 3) 퇴화 방지: 면적이 bbox 의 1% 미만이면 null.
+  const norm = normalizeSilhouette(pts);
+  const xs = norm.map((p) => p[0]);
+  const ys = norm.map((p) => p[1]);
+  const bboxArea = (Math.max(...xs) - Math.min(...xs)) * (Math.max(...ys) - Math.min(...ys));
+  if (bboxArea === 0 || Math.abs(polygonArea(norm)) < 0.01 * bboxArea) return null;
+  return { outer: norm };
 }

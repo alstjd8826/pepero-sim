@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { maskToSilhouette, traceOuterContour } from '@/src/silhouette/contour';
 import { MAX_OUTER_POINTS, type Vec2 } from '@/src/recipe/types';
+import { polygonArea, polygonSelfIntersects } from '@/src/silhouette/simplify';
 import { makeMask } from './helpers';
 
 function bbox(pts: Vec2[]) {
@@ -8,22 +9,6 @@ function bbox(pts: Vec2[]) {
   const ys = pts.map((p) => p[1]);
   return { w: Math.max(...xs) - Math.min(...xs), h: Math.max(...ys) - Math.min(...ys) };
 }
-
-function segIntersect(a: Vec2, b: Vec2, c: Vec2, d: Vec2): boolean {
-  const o = (p: Vec2, q: Vec2, r: Vec2) => (q[0] - p[0]) * (r[1] - p[1]) - (q[1] - p[1]) * (r[0] - p[0]);
-  return o(a, b, c) * o(a, b, d) < 0 && o(c, d, a) * o(c, d, b) < 0;
-}
-function selfIntersects(pts: Vec2[]): boolean {
-  const n = pts.length;
-  for (let i = 0; i < n; i++) {
-    for (let j = i + 1; j < n; j++) {
-      if (j === i + 1 || (i === 0 && j === n - 1)) continue;
-      if (segIntersect(pts[i], pts[(i + 1) % n], pts[j], pts[(j + 1) % n])) return true;
-    }
-  }
-  return false;
-}
-const area = (p: Vec2[]) => p.reduce((s, a, i) => s + (a[0] * p[(i + 1) % p.length][1] - p[(i + 1) % p.length][0] * a[1]), 0) / 2;
 
 describe('contour', () => {
   it('traceOuterContour of 20x10 rect has 2:1 bbox', () => {
@@ -41,8 +26,8 @@ describe('contour', () => {
     const { w, h } = bbox(s!.outer);
     expect(Math.abs(w / h - 1)).toBeLessThan(0.05);
     expect(s!.outer.length).toBeLessThanOrEqual(MAX_OUTER_POINTS);
-    expect(selfIntersects(s!.outer)).toBe(false);
-    expect(area(s!.outer)).toBeGreaterThan(0); // CCW in y-up
+    expect(polygonSelfIntersects(s!.outer)).toBe(false);
+    expect(polygonArea(s!.outer)).toBeGreaterThan(0); // CCW in y-up
   });
 
   it('maskToSilhouette returns null for a tiny blob', () => {
@@ -59,5 +44,25 @@ describe('contour', () => {
     const s = maskToSilhouette(m);
     expect(s).not.toBeNull();
     expect(s!.outer.length).toBeLessThanOrEqual(MAX_OUTER_POINTS);
+    expect(polygonSelfIntersects(s!.outer)).toBe(false);
+    expect(polygonArea(s!.outer)).toBeGreaterThan(0);
+  });
+
+  it('ignores separated text/effect blobs next to a character', () => {
+    const rects = [[10, 150], [30, 150], [50, 150]];
+    const m = makeMask(200, 200, (x, y) =>
+      (x - 120) ** 2 + (y - 80) ** 2 <= 40 * 40 || rects.some(([rx, ry]) => x >= rx && x < rx + 8 && y >= ry && y < ry + 4));
+    const s = maskToSilhouette(m);
+    expect(s).not.toBeNull();
+    const { w, h } = bbox(s!.outer);
+    expect(Math.abs(w / h - 1)).toBeLessThan(0.05);
+    expect(s!.outer.length).toBeLessThanOrEqual(MAX_OUTER_POINTS);
+    expect(polygonSelfIntersects(s!.outer)).toBe(false);
+    expect(polygonArea(s!.outer)).toBeGreaterThan(0);
+  });
+
+  it('polygonSelfIntersects detects a bowtie', () => {
+    expect(polygonSelfIntersects([[0, 0], [1, 1], [1, 0], [0, 1]])).toBe(true);
+    expect(polygonSelfIntersects([[0, 0], [1, 0], [1, 1], [0, 1]])).toBe(false);
   });
 });

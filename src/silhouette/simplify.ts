@@ -75,3 +75,31 @@ export function normalizeSilhouette(pts: Vec2[]): Vec2[] {
   const m = Math.max(maxX - minX, maxY - minY) || 1;
   return pts.map(([x, y]) => [(x - cx) / m, -(y - cy) / m] as Vec2);
 }
+
+function segCross(a: Vec2, b: Vec2, c: Vec2, d: Vec2): boolean {
+  const o = (p: Vec2, q: Vec2, r: Vec2) => (q[0] - p[0]) * (r[1] - p[1]) - (q[1] - p[1]) * (r[0] - p[0]);
+  return o(a, b, c) * o(a, b, d) < 0 && o(c, d, a) * o(c, d, b) < 0;
+}
+
+/** 닫힌 다각형의 비인접 변끼리 교차하는지 (O(n²), 최종 폴리곤 ≤400점 용). */
+export function polygonSelfIntersects(pts: Vec2[]): boolean {
+  const n = pts.length;
+  for (let i = 0; i < n; i++) {
+    for (let j = i + 1; j < n; j++) {
+      if (j === i + 1 || (i === 0 && j === n - 1)) continue;
+      if (segCross(pts[i], pts[(i + 1) % n], pts[j], pts[(j + 1) % n])) return true;
+    }
+  }
+  return false;
+}
+
+/** 부호 있는 면적 (shoelace). y↑ 공간에서 CCW 면 양수. */
+export function polygonArea(pts: Vec2[]): number {
+  let s = 0;
+  for (let i = 0; i < pts.length; i++) {
+    const a = pts[i];
+    const b = pts[(i + 1) % pts.length];
+    s += a[0] * b[1] - b[0] * a[1];
+  }
+  return s / 2;
+}
