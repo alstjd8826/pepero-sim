@@ -1,8 +1,8 @@
 'use client';
 
-import { useCallback } from 'react';
+import { useCallback, useEffect } from 'react';
 import * as THREE from 'three';
-import { Canvas, useThree } from '@react-three/fiber';
+import { Canvas, createPortal, useThree } from '@react-three/fiber';
 import { Center, OrbitControls, type OnCenterCallbackProps } from '@react-three/drei';
 import type { PeperoRecipe } from '@/src/recipe/types';
 import { PeperoModel } from '@/src/three/PeperoModel';
@@ -20,8 +20,7 @@ export default function PeperoViewer({ recipe }: { recipe: PeperoRecipe }) {
       style={{ width: '100%', height: '100%', touchAction: 'none' }}
     >
       <ambientLight intensity={0.7} />
-      <directionalLight position={[3, 6, 5]} intensity={2} />
-      <directionalLight position={[-4, 2, 3]} intensity={0.6} />
+      <CameraLights />
       <ViewerModel recipe={recipe} />
       <OrbitControls
         enableZoom={false}
@@ -31,6 +30,30 @@ export default function PeperoViewer({ recipe }: { recipe: PeperoRecipe }) {
         makeDefault
       />
     </Canvas>
+  );
+}
+
+/**
+ * 조명을 카메라에 붙인다. OrbitControls 는 모델이 아니라 카메라를 돌리므로, 조명이 월드에 고정돼 있으면
+ * 카메라가 뒤로 돌아갔을 때 보이는 면(뒷면)이 그늘이라 어둡게 보인다. 카메라 기준으로 두면 어느 방향에서 봐도
+ * 만들기 화면과 같은 조명이 된다 (위치 값은 만들기 화면과 같은 오프셋).
+ */
+function CameraLights() {
+  const camera = useThree((s) => s.camera);
+  const scene = useThree((s) => s.scene);
+  useEffect(() => {
+    // 카메라의 자식(조명)이 렌더되려면 카메라가 씬 그래프 안에 있어야 한다
+    scene.add(camera);
+    return () => {
+      scene.remove(camera);
+    };
+  }, [camera, scene]);
+  return createPortal(
+    <>
+      <directionalLight position={[3, 6, 5]} intensity={2} />
+      <directionalLight position={[-4, 2, 3]} intensity={0.6} />
+    </>,
+    camera,
   );
 }
 
