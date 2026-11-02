@@ -157,3 +157,10 @@ export function setCoatings(material: THREE.MeshStandardMaterial, coatings: Coat
   const packed = packCoatingUniforms(coatings, material.userData.packed as CoatingUniformArrays);
   uniforms.uCount.value = packed.count;
 }
+
+/** 처음부터 코팅이 들어간 머티리얼. 첫 프레임부터 코팅이 보이도록 uniform 을 생성 시점에 채운다. */
+export function createCoatedMaterial(coatings: Coatings): THREE.MeshStandardMaterial {
+  const material = createCookieMaterial();
+  setCoatings(material, coatings);
+  return material;
+}

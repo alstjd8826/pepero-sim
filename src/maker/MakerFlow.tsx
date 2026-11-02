@@ -158,7 +158,12 @@ export function MakerFlow() {
   return (
     <main className={`${styles.root} ${step === 'dip' ? styles.rootDip : ''}`}>
       <header className={styles.header}>
-        <h1 className={styles.title}>빼빼로 시뮬레이터</h1>
+        <div className={styles.headerTop}>
+          <h1 className={styles.title}>빼빼로 시뮬레이터</h1>
+          <Link href="/gallery" className={styles.headerLink}>
+            갤러리
+          </Link>
+        </div>
         <ol className={styles.steps} aria-label="만들기 단계">
           {makerSteps.map((s, i) => (
             <li

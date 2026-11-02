@@ -1,9 +1,9 @@
 'use client';
 
-import { useEffect, useMemo } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import type { Coating, PeperoRecipe } from '@/src/recipe/types';
 import { buildCookieGeometry } from './cookieGeometry';
-import { createCookieMaterial, setCoatings } from './coatingMaterial';
+import { createCoatedMaterial, setCoatings } from './coatingMaterial';
 
 type Props = { recipe: PeperoRecipe; liveCoatings?: Coating[] };
 
@@ -28,10 +28,13 @@ function PeperoModelV1({ recipe, liveCoatings }: { recipe: PeperoRecipe; liveCoa
   const geometry = useMemo(() => buildCookieGeometry(shape, kind), [shape, kind]);
   useEffect(() => () => geometry.dispose(), [geometry]);
 
-  const material = useMemo(() => createCookieMaterial(), []);
+  const coatings = recipe.coatings;
+  // 코팅을 머티리얼 생성 시점에 채워 첫 프레임부터 초코가 보이게 한다 (effect 는 이후 변경만 반영)
+  const [material] = useState(() =>
+    createCoatedMaterial(liveCoatings.length ? [...coatings, ...liveCoatings] : coatings),
+  );
   useEffect(() => () => material.dispose(), [material]);
 
-  const coatings = recipe.coatings;
   useEffect(() => {
     setCoatings(material, liveCoatings.length ? [...coatings, ...liveCoatings] : coatings);
   }, [material, coatings, liveCoatings]);

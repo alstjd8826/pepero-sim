@@ -1,0 +1,217 @@
+.page {
+  --ink: #3b2a1e;
+  --muted: #7a5a44;
+  --line: #e2d3c0;
+  --cream: #f7f0e6;
+  --card: #fffaf3;
+  --choco: #6b3e26;
+  min-height: 100dvh;
+  width: 100%;
+  padding: 12px max(16px, calc((100% - 880px) / 2)) 32px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  background: var(--cream);
+  color: var(--ink);
+  color-scheme: light;
+}
+
+.topbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.title {
+  font-size: 20px;
+  font-weight: 800;
+}
+
+.navLink {
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--choco);
+  padding: 10px 4px;
+}
+
+.stage {
+  width: 100%;
+  max-width: 480px;
+  aspect-ratio: 1;
+  margin: 0 auto;
+  border-radius: 16px;
+  border: 1px solid var(--line);
+  background: var(--card);
+  overflow: hidden;
+  /* 캔버스 안에서는 드래그 회전, 바깥(주변 영역)에서는 세로 스크롤이 그대로 된다 */
+  touch-action: none;
+}
+
+.loading {
+  display: grid;
+  place-items: center;
+  height: 100%;
+  color: var(--muted);
+  font-size: 14px;
+}
+
+.info {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+  text-align: center;
+}
+
+.nickname {
+  font-size: 22px;
+  font-weight: 800;
+}
+
+.actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  justify-content: center;
+  width: 100%;
+}
+
+.likeWrap {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+
+.like,
+.cta {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  min-height: 48px;
+  padding: 0 20px;
+  border-radius: 12px;
+  font-size: 16px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.like {
+  border: 1px solid var(--choco);
+  background: var(--card);
+  color: var(--choco);
+}
+
+.like:disabled {
+  background: #f1dcd3;
+  cursor: default;
+}
+
+.cta {
+  border: 0;
+  background: var(--choco);
+  color: #fff;
+}
+
+.like:focus-visible,
+.cta:focus-visible,
+.more:focus-visible,
+.card:focus-visible,
+.navLink:focus-visible {
+  outline: 3px solid #e0a252;
+  outline-offset: 2px;
+}
+
+.status {
+  min-height: 1.2em;
+  font-size: 13px;
+  color: #a33;
+}
+
+.errorBox {
+  margin: auto;
+  max-width: 360px;
+  padding: 24px;
+  text-align: center;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  align-items: center;
+}
+
+.grid {
+  list-style: none;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+@media (min-width: 768px) {
+  .grid {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 14px;
+  }
+}
+
+.card {
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--card);
+  overflow: hidden;
+}
+
+.thumb {
+  display: block;
+  width: 100%;
+  height: auto;
+  aspect-ratio: 1;
+  object-fit: cover;
+  background: #efe3d2;
+}
+
+.cardMeta {
+  display: flex;
+  justify-content: space-between;
+  gap: 6px;
+  padding: 8px 10px;
+  font-size: 13px;
+}
+
+.nick {
+  font-weight: 700;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.likes {
+  color: var(--muted);
+  flex-shrink: 0;
+}
+
+.more {
+  align-self: center;
+  min-height: 48px;
+  padding: 0 28px;
+  border-radius: 12px;
+  border: 1px solid var(--choco);
+  background: var(--card);
+  color: var(--choco);
+  font-size: 16px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.more:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.empty {
+  text-align: center;
+  color: var(--muted);
+  padding: 48px 0;
+}

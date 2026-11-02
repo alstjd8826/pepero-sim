@@ -90,3 +90,12 @@ describe('createCookieMaterial', () => {
     m.dispose();
   });
 });
+
+describe('createCoatedMaterial', () => {
+  it('생성 직후부터 코팅 uniform 이 채워져 있다 (첫 프레임 무코팅 방지)', async () => {
+    const { createCoatedMaterial } = await import('@/src/three/coatingMaterial');
+    const m = createCoatedMaterial([dip(1.0), dip(2.0)]);
+    const u = m.userData.coatingUniforms as { uCount: { value: number } };
+    expect(u.uCount.value).toBe(2);
+  });
+});
