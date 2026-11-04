@@ -7,6 +7,7 @@ import type { Coating, PeperoRecipe } from '@/src/recipe/types';
 import { resolveReliefUrl } from '@/src/recipe/relief';
 import { buildCookieGeometry, silhouettePlacement } from './cookieGeometry';
 import { stickTopFor } from './registry';
+import { Decorations } from './Decorations';
 import {
   createChocoShellMaterial,
   createCoatedMaterial,
@@ -112,8 +113,10 @@ function PeperoModelV1({ recipe, liveCoatings }: { recipe: PeperoRecipe; liveCoa
 
   return (
     <group>
-      <mesh geometry={geometry} material={material} castShadow receiveShadow />
-      <mesh geometry={geometry} material={shell} />
+      {/* userData.pepero: 꾸미기 화면이 레이캐스트로 쿠키 표면만 고르는 표시 */}
+      <mesh geometry={geometry} material={material} castShadow receiveShadow userData={{ pepero: 'cookie' }} />
+      <mesh geometry={geometry} material={shell} raycast={() => {}} />
+      <Decorations strokes={recipe.strokes} toppings={recipe.toppings} />
     </group>
   );
 }

@@ -325,3 +325,74 @@
   mix-blend-mode: multiply;
   opacity: 0.85;
 }
+
+/* 초코 색·펜 색·토핑 고르기 */
+.swatches {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.swatch {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 36px;
+  padding: 0 10px;
+  border-radius: 999px;
+  border: 1px solid var(--line);
+  background: var(--card);
+  color: var(--ink);
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.swatch[aria-checked='true'] {
+  border-color: var(--choco);
+  box-shadow: inset 0 0 0 1px var(--choco);
+  background: #fff;
+}
+
+.swatch:focus-visible,
+.tab:focus-visible {
+  outline: 3px solid #e0a252;
+  outline-offset: 2px;
+}
+
+.swatchDot {
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  border: 1px solid rgb(0 0 0 / 0.15);
+}
+
+.widthDot {
+  border-radius: 50%;
+  background: var(--ink);
+}
+
+.tabs {
+  display: flex;
+  gap: 4px;
+  padding: 3px;
+  border-radius: 12px;
+  background: var(--line);
+}
+
+.tab {
+  flex: 1;
+  min-height: 36px;
+  border: 0;
+  border-radius: 9px;
+  background: transparent;
+  color: var(--muted);
+  font-size: 15px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.tab[aria-selected='true'] {
+  background: var(--card);
+  color: var(--choco);
+}

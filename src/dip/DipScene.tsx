@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import * as THREE from 'three';
 import { Canvas, useFrame, useThree } from '@react-three/fiber';
-import type { BaseKind, Coating, PeperoRecipe, Vec2 } from '@/src/recipe/types';
+import type { BaseKind, Coating, CoatingType, PeperoRecipe, Vec2 } from '@/src/recipe/types';
 import { PeperoModel } from '@/src/three/PeperoModel';
 import { BEVEL } from '@/src/three/cookieGeometry';
 import { STICK_RADIUS, baseRegistry, coatingRegistry } from '@/src/three/registry';
@@ -31,6 +31,8 @@ type Props = {
   onChange?: (coatings: Coating[]) => void;
   /** 바뀌면 딥핑 상태를 initialDip(recipe.coatings) 로 되돌리고 쿠키를 처음 자리로 */
   resetKey?: number | string;
+  /** 통에 담긴 초코 색. 다음 담금부터 이 색으로 코팅된다 (담그는 중에 바꾸면 이번 담금은 그대로). */
+  chocoType?: CoatingType;
 };
 
 type RigProps = Omit<Props, 'resetKey'>;
@@ -46,7 +48,7 @@ type RigProps = Omit<Props, 'resetKey'>;
  * - `onChange` 는 새 코팅이 확정될 때만 호출된다: 표면 위로 빠져나올 때, 또는 잠긴 채 포인터를 놓을 때
  *   (놓으면 쿠키가 표면 위 처음 높이로 떠오른다).
  */
-export function DipScene({ recipe, onChange, resetKey }: Props) {
+export function DipScene({ recipe, onChange, resetKey, chocoType = 'milk-choco' }: Props) {
   return (
     <div
       style={{
@@ -63,7 +65,7 @@ export function DipScene({ recipe, onChange, resetKey }: Props) {
         <ambientLight intensity={0.7} />
         <directionalLight position={[3, 6, 5]} intensity={2} />
         <directionalLight position={[-4, 2, 3]} intensity={0.6} />
-        <DipRig key={String(resetKey ?? '')} recipe={recipe} onChange={onChange} />
+        <DipRig key={String(resetKey ?? '')} recipe={recipe} onChange={onChange} chocoType={chocoType} />
       </Canvas>
     </div>
   );
@@ -132,7 +134,7 @@ function randomSeed(): number {
   return crypto.getRandomValues(new Uint32Array(1))[0];
 }
 
-function DipRig({ recipe, onChange }: RigProps) {
+function DipRig({ recipe, onChange, chocoType = 'milk-choco' }: RigProps) {
   // three 객체는 렌더 중이 아니라 핸들러/이펙트 안에서 get() 으로 꺼내 변경한다.
   const get = useThree((s) => s.get);
   const gl = useThree((s) => s.gl);
@@ -165,6 +167,10 @@ function DipRig({ recipe, onChange }: RigProps) {
   useLayoutEffect(() => {
     onChangeRef.current = onChange;
   }, [onChange]);
+  const chocoTypeRef = useRef(chocoType);
+  useLayoutEffect(() => {
+    chocoTypeRef.current = chocoType;
+  }, [chocoType]);
 
   // 초기 위치. 카메라 맞춤(아래)보다 먼저 실행돼야 카메라 추종 오프셋이 0 으로 시작한다.
   useLayoutEffect(() => {
@@ -273,7 +279,11 @@ function DipRig({ recipe, onChange }: RigProps) {
       }
       const nextLive = liveCoating(next);
       setLive((cur) =>
-        cur?.plane.offset === nextLive?.plane.offset && cur?.edgeSeed === nextLive?.edgeSeed ? cur : nextLive,
+        cur?.plane.offset === nextLive?.plane.offset &&
+        cur?.edgeSeed === nextLive?.edgeSeed &&
+        cur?.type === nextLive?.type
+          ? cur
+          : nextLive,
       );
     };
 
@@ -308,7 +318,7 @@ function DipRig({ recipe, onChange }: RigProps) {
       s.lastX = x;
       s.lastT = ev.timeStamp;
 
-      applyDip(stepDip(dipRef.current, y, SURFACE_Y, randomSeed));
+      applyDip(stepDip(dipRef.current, y, SURFACE_Y, randomSeed, chocoTypeRef.current));
     };
 
     const onMove = (e: PointerEvent) => {
@@ -362,16 +372,16 @@ function DipRig({ recipe, onChange }: RigProps) {
           </group>
         </group>
       </group>
-      <ChocoPot layout={L} />
+      <ChocoPot layout={L} type={chocoType} />
     </>
   );
 }
 
-function ChocoPot({ layout: L }: { layout: Layout }) {
+function ChocoPot({ layout: L, type }: { layout: Layout; type: CoatingType }) {
   const chocoDepth = SURFACE_Y - L.potBottom;
   const rimTop = SURFACE_Y + 0.35;
   const wallHeight = rimTop - (L.potBottom - 0.12);
-  const choco = coatingRegistry['milk-choco'];
+  const choco = coatingRegistry[type];
   return (
     <group>
       {/* 녹은 초코 */}

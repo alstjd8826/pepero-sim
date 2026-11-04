@@ -9,14 +9,15 @@ import {
 } from '@/src/maker/steps';
 
 describe('makerSteps', () => {
-  it('upload → shape → dip → finish 순서', () => {
-    expect(makerSteps).toEqual(['upload', 'shape', 'dip', 'finish']);
+  it('upload → shape → dip → decorate → finish 순서', () => {
+    expect(makerSteps).toEqual(['upload', 'shape', 'dip', 'decorate', 'finish']);
   });
 
   it('nextStep: 마지막 다음은 null', () => {
     expect(nextStep('upload')).toBe('shape');
     expect(nextStep('shape')).toBe('dip');
-    expect(nextStep('dip')).toBe('finish');
+    expect(nextStep('dip')).toBe('decorate');
+    expect(nextStep('decorate')).toBe('finish');
     expect(nextStep('finish')).toBeNull();
   });
 
@@ -24,7 +25,8 @@ describe('makerSteps', () => {
     expect(prevStep('upload')).toBeNull();
     expect(prevStep('shape')).toBe('upload');
     expect(prevStep('dip')).toBe('shape');
-    expect(prevStep('finish')).toBe('dip');
+    expect(prevStep('decorate')).toBe('dip');
+    expect(prevStep('finish')).toBe('decorate');
   });
 });
 

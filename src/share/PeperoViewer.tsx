@@ -38,7 +38,7 @@ export default function PeperoViewer({ recipe }: { recipe: PeperoRecipe }) {
  * 카메라가 뒤로 돌아갔을 때 보이는 면(뒷면)이 그늘이라 어둡게 보인다. 카메라 기준으로 두면 어느 방향에서 봐도
  * 만들기 화면과 같은 조명이 된다 (위치 값은 만들기 화면과 같은 오프셋).
  */
-function CameraLights() {
+export function CameraLights() {
   const camera = useThree((s) => s.camera);
   const scene = useThree((s) => s.scene);
   useEffect(() => {

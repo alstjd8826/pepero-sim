@@ -1,6 +1,13 @@
 import { describe, expect, it } from 'vitest';
 import { ZodError } from 'zod';
-import { createRecipe, parseRecipe } from '@/src/recipe/types';
+import {
+  COATING_TYPES,
+  MAX_STROKE_POINTS,
+  MAX_TOPPINGS,
+  MAX_TOTAL_STROKE_POINTS,
+  createRecipe,
+  parseRecipe,
+} from '@/src/recipe/types';
 import { reliefKeyFor, resolveReliefUrl } from '@/src/recipe/relief';
 
 const tri: [number, number][] = [[0, 0], [1, 0], [0.5, 1]];
@@ -55,9 +62,54 @@ describe('parseRecipe', () => {
     r.base.kind = 'double-stick';
     expect(issuePath(r)).toEqual(['base', 'kind']);
   });
-  it('toppings 가 비어있지 않으면 throw', () => {
-    const r = { ...createRecipe({ outer: tri }, true), toppings: [{ type: 'x' }] };
+  it('모든 초코 색이 통과, 모르는 색은 throw', () => {
+    for (const type of COATING_TYPES) {
+      const r = { ...createRecipe({ outer: tri }, true), coatings: [{ ...coating, type }] };
+      expect(parseRecipe(JSON.parse(JSON.stringify(r))).coatings[0].type).toBe(type);
+    }
+    const bad = { ...createRecipe({ outer: tri }, true), coatings: [{ ...coating, type: 'mint' }] };
+    expect(issuePath(bad)).toContain('coatings');
+  });
+  it('토핑·초코펜이 채워진 레시피도 round-trip', () => {
+    const r = {
+      ...createRecipe({ outer: tri }, true),
+      toppings: [{ type: 'sprinkle', position: [0.1, 4.2, 0.17], normal: [0, 0, 1], spin: 1.2 }],
+      strokes: [{ color: 'white', width: 'thin', points: [[0, 4, 0.2], [0.1, 4.1, 0.2]] }],
+    };
+    expect(parseRecipe(JSON.parse(JSON.stringify(r)))).toEqual(r);
+  });
+  it('strokes 가 없는 예전 레시피도 통과', () => {
+    const r = createRecipe({ outer: tri }, true) as Record<string, unknown>;
+    delete r.strokes;
+    expect(parseRecipe(r).strokes).toBeUndefined();
+  });
+  it('모르는 토핑이면 throw', () => {
+    const r = {
+      ...createRecipe({ outer: tri }, true),
+      toppings: [{ type: 'x', position: [0, 0, 0], normal: [0, 0, 1], spin: 0 }],
+    };
     expect(issuePath(r)).toContain('toppings');
+  });
+  it(`토핑 ${MAX_TOPPINGS + 1}개면 throw`, () => {
+    const t = { type: 'pearl', position: [0, 0, 0], normal: [0, 0, 1], spin: 0 };
+    const r = { ...createRecipe({ outer: tri }, true), toppings: Array(MAX_TOPPINGS + 1).fill(t) };
+    expect(issuePath(r)).toEqual(['toppings']);
+  });
+  it('점 1개짜리 선은 throw', () => {
+    const r = {
+      ...createRecipe({ outer: tri }, true),
+      strokes: [{ color: 'white', width: 'thin', points: [[0, 0, 0]] }],
+    };
+    expect(issuePath(r)).toContain('strokes');
+  });
+  it(`선의 점이 합쳐서 ${MAX_TOTAL_STROKE_POINTS}개를 넘으면 throw`, () => {
+    const pts = Array.from({ length: MAX_STROKE_POINTS }, (_, i) => [i * 0.01, 0, 0]);
+    const n = Math.ceil((MAX_TOTAL_STROKE_POINTS + 1) / MAX_STROKE_POINTS);
+    const r = {
+      ...createRecipe({ outer: tri }, true),
+      strokes: Array.from({ length: n }, () => ({ color: 'dark', width: 'thick', points: pts })),
+    };
+    expect(issuePath(r)).toEqual(['strokes']);
   });
 });
 

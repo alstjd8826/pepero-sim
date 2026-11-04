@@ -14,7 +14,28 @@ import Link from 'next/link';
 import { imageToSilhouette } from '@/src/silhouette/pipeline';
 import type { Mask } from '@/src/silhouette/raster';
 import { createRecipe } from '@/src/recipe/defaults';
-import type { Coating, PeperoRecipe, Silhouette } from '@/src/recipe/types';
+import {
+  COATING_TYPES,
+  MAX_TOPPINGS,
+  PEN_COLORS,
+  PEN_WIDTHS,
+  TOPPING_TYPES,
+  type Coating,
+  type CoatingType,
+  type PenColor,
+  type PenWidth,
+  type PeperoRecipe,
+  type Silhouette,
+  type ToppingType,
+} from '@/src/recipe/types';
+import { coatingRegistry, penRegistry, penWidthRegistry, toppingRegistry } from '@/src/three/registry';
+import {
+  canStartStroke,
+  flattenActions,
+  remainingStrokePoints,
+  type DecoAction,
+} from '@/src/decorate/decorations';
+import type { DecoTool } from '@/src/decorate/DecorateScene';
 import { RELIEF_STRENGTH } from '@/src/recipe/relief';
 import { LogoMark } from '@/src/share/Logo';
 import { extractRelief, isReliefEmpty, reliefToPngBlob } from '@/src/silhouette/relief';
@@ -30,6 +51,10 @@ const DipScene = dynamic(() => import('@/src/dip/DipScene').then((m) => m.DipSce
   ssr: false,
   loading: () => <p className={styles.canvasLoading}>초코 통 준비 중…</p>,
 });
+const DecorateScene = dynamic(() => import('@/src/decorate/DecorateScene').then((m) => m.DecorateScene), {
+  ssr: false,
+  loading: () => <p className={styles.canvasLoading}>꾸미기 준비 중…</p>,
+});
 const PeperoPreview = dynamic(() => import('./PeperoPreview'), {
   ssr: false,
   loading: () => <p className={styles.canvasLoading}>3D 준비 중…</p>,
@@ -39,6 +64,7 @@ const STEP_LABEL: Record<StepId, string> = {
   upload: '이미지',
   shape: '모양',
   dip: '담그기',
+  decorate: '꾸미기',
   finish: '완성',
 };
 
@@ -94,6 +120,15 @@ export function MakerFlow() {
   const [hasStick, setHasStick] = useState(true);
   const [coatings, setCoatings] = useState<Coating[]>([]);
   const [resetKey, setResetKey] = useState(0);
+  const [chocoType, setChocoType] = useState<CoatingType>('milk-choco');
+
+  // 꾸미기
+  const [decoActions, setDecoActions] = useState<DecoAction[]>([]);
+  const [decoMode, setDecoMode] = useState<'pen' | 'topping'>('pen');
+  const [penColor, setPenColor] = useState<PenColor>('white');
+  const [penWidth, setPenWidth] = useState<PenWidth>('thin');
+  const [toppingType, setToppingType] = useState<ToppingType>('sprinkle');
+  const [decoLimit, setDecoLimit] = useState(false);
 
   // 완성
   const [nickname, setNickname] = useState('');
@@ -110,10 +145,26 @@ export function MakerFlow() {
     [silhouette, hasStick],
   );
   // 확정 코팅을 다시 넣어도 DipScene 은 리셋되지 않는다(resetKey 로만 리셋)
-  const recipe = useMemo(
-    () => (baseRecipe ? { ...baseRecipe, coatings } : null),
-    [baseRecipe, coatings],
+  const decorations = useMemo(() => flattenActions(decoActions), [decoActions]);
+  const recipe = useMemo<PeperoRecipe | null>(() => {
+    if (!baseRecipe) return null;
+    const { strokes, toppings } = decorations;
+    return { ...baseRecipe, coatings, toppings, ...(strokes.length ? { strokes } : {}) };
+  }, [baseRecipe, coatings, decorations]);
+  const decoTool = useMemo<DecoTool>(
+    () => (decoMode === 'pen' ? { kind: 'pen', color: penColor, width: penWidth } : { kind: 'topping', type: toppingType }),
+    [decoMode, penColor, penWidth, toppingType],
   );
+  const toppingsLeft = MAX_TOPPINGS - decorations.toppings.length;
+  const addDeco = useCallback((a: DecoAction) => {
+    setDecoActions((list) => [...list, a]);
+    setDecoLimit(false);
+  }, []);
+  const onLimit = useCallback(() => setDecoLimit(true), []);
+  const resetDecor = useCallback(() => {
+    setDecoActions([]);
+    setDecoLimit(false);
+  }, []);
   // 화면용 레시피: 저장 전 각인은 로컬 object URL 로 미리 본다. 저장할 땐 recipe(각인 없음) + relief PNG 를 따로 넘긴다.
   const activeStrength = relief ? RELIEF_STRENGTH : 0;
   const viewRecipe = useMemo<PeperoRecipe | null>(() => {
@@ -188,6 +239,7 @@ export function MakerFlow() {
     scheduleRelief(token);
     setSilhouette(result.silhouette);
     resetDip();
+    resetDecor();
     setSavedId(null);
     setSaveError(null);
     setStep('shape');
@@ -196,6 +248,7 @@ export function MakerFlow() {
   const toggleStick = () => {
     setHasStick((v) => !v);
     resetDip();
+    resetDecor();
   };
 
   const onCaptureReady = useCallback((capture: CaptureFn) => {
@@ -238,7 +291,7 @@ export function MakerFlow() {
   const shareUrl = savedId && typeof window !== 'undefined' ? `${window.location.origin}/p/${savedId}` : null;
 
   return (
-    <main className={`${styles.root} ${step === 'dip' ? styles.rootDip : ''}`}>
+    <main className={`${styles.root} ${step === 'dip' || step === 'decorate' ? styles.rootDip : ''}`}>
       <header className={styles.header}>
         <div className={styles.headerTop}>
           <h1 className={styles.title}>
@@ -336,9 +389,25 @@ export function MakerFlow() {
 
       {step === 'dip' && viewRecipe && (
         <section className={styles.dipPanel}>
-          <p className={styles.dipHint}>쿠키를 잡고 아래 초코 통에 담갔다 빼 보세요. 여러 번 해도 돼요.</p>
+          <p className={styles.dipHint}>쿠키를 잡고 아래 초코 통에 담갔다 빼 보세요. 색을 바꿔 여러 번 담가도 돼요.</p>
+          <div className={styles.swatches} role="radiogroup" aria-label="초코 색">
+            {COATING_TYPES.map((t) => (
+              <button
+                key={t}
+                type="button"
+                role="radio"
+                aria-checked={chocoType === t}
+                className={styles.swatch}
+                onClick={() => setChocoType(t)}
+                data-testid={`choco-${t}`}
+              >
+                <span className={styles.swatchDot} style={{ background: coatingRegistry[t].color }} />
+                {coatingRegistry[t].label}
+              </button>
+            ))}
+          </div>
           <div className={styles.dipStage}>
-            <DipScene recipe={viewRecipe} onChange={setCoatings} resetKey={resetKey} />
+            <DipScene recipe={viewRecipe} onChange={setCoatings} resetKey={resetKey} chocoType={chocoType} />
           </div>
           <div className={styles.dipBar}>
             <button type="button" className={styles.secondary} onClick={() => back && goTo(back)}>
@@ -346,6 +415,125 @@ export function MakerFlow() {
             </button>
             <button type="button" className={styles.secondary} onClick={resetDip}>
               다시 담그기 초기화
+            </button>
+            <button type="button" className={styles.primary} onClick={() => goTo('decorate')}>
+              꾸미러 가기
+            </button>
+          </div>
+        </section>
+      )}
+
+      {step === 'decorate' && viewRecipe && (
+        <section className={styles.dipPanel}>
+          <div className={styles.tabs} role="tablist" aria-label="꾸미기 도구">
+            <button
+              type="button"
+              role="tab"
+              aria-selected={decoMode === 'pen'}
+              className={styles.tab}
+              onClick={() => setDecoMode('pen')}
+            >
+              초코펜
+            </button>
+            <button
+              type="button"
+              role="tab"
+              aria-selected={decoMode === 'topping'}
+              className={styles.tab}
+              onClick={() => setDecoMode('topping')}
+              data-testid="tab-topping"
+            >
+              토핑
+            </button>
+          </div>
+          {decoMode === 'pen' ? (
+            <div className={styles.swatches} role="radiogroup" aria-label="펜 색">
+              {PEN_COLORS.map((c) => (
+                <button
+                  key={c}
+                  type="button"
+                  role="radio"
+                  aria-checked={penColor === c}
+                  className={styles.swatch}
+                  onClick={() => setPenColor(c)}
+                  data-testid={`pen-${c}`}
+                >
+                  <span className={styles.swatchDot} style={{ background: penRegistry[c].color }} />
+                  {penRegistry[c].label}
+                </button>
+              ))}
+              {PEN_WIDTHS.map((w) => (
+                <button
+                  key={w}
+                  type="button"
+                  role="radio"
+                  aria-checked={penWidth === w}
+                  className={styles.swatch}
+                  onClick={() => setPenWidth(w)}
+                  data-testid={`width-${w}`}
+                >
+                  <span
+                    className={styles.widthDot}
+                    style={{ width: penWidthRegistry[w].radius * 300, height: penWidthRegistry[w].radius * 300 }}
+                  />
+                  {penWidthRegistry[w].label}
+                </button>
+              ))}
+            </div>
+          ) : (
+            <div className={styles.swatches} role="radiogroup" aria-label="토핑">
+              {TOPPING_TYPES.map((t) => (
+                <button
+                  key={t}
+                  type="button"
+                  role="radio"
+                  aria-checked={toppingType === t}
+                  className={styles.swatch}
+                  onClick={() => setToppingType(t)}
+                  data-testid={`topping-${t}`}
+                >
+                  <ToppingIcon type={t} />
+                  {toppingRegistry[t].label}
+                </button>
+              ))}
+            </div>
+          )}
+          <p className={styles.dipHint} aria-live="polite">
+            {decoLimit
+              ? '더는 못 올려요. 되돌리기로 지우고 다시 해 보세요.'
+              : decoMode === 'pen'
+                ? '쿠키 위를 그으면 초코펜으로 그려져요. 빈 곳을 끌면 돌아가요.'
+                : '쿠키를 누르면 토핑이 올라가요. 끌면 뿌려져요.'}
+          </p>
+          <div className={styles.dipStage}>
+            <DecorateScene
+              recipe={viewRecipe}
+              tool={decoTool}
+              strokePointsLeft={remainingStrokePoints(decoActions)}
+              canStartStroke={canStartStroke(decoActions)}
+              toppingsLeft={toppingsLeft}
+              onStroke={(stroke) => addDeco({ kind: 'stroke', stroke })}
+              onToppings={(items) => addDeco({ kind: 'toppings', items })}
+              onLimit={onLimit}
+            />
+          </div>
+          <div className={styles.dipBar}>
+            <button type="button" className={styles.secondary} onClick={() => goTo('dip')}>
+              이전
+            </button>
+            <button
+              type="button"
+              className={styles.secondary}
+              onClick={() => {
+                setDecoActions((list) => list.slice(0, -1));
+                setDecoLimit(false);
+              }}
+              disabled={!decoActions.length}
+            >
+              되돌리기
+            </button>
+            <button type="button" className={styles.secondary} onClick={resetDecor} disabled={!decoActions.length}>
+              모두 지우기
             </button>
             <button type="button" className={styles.primary} onClick={() => goTo('finish')}>
               완성
@@ -419,7 +607,7 @@ export function MakerFlow() {
                   onClick={() => back && goTo(back)}
                   disabled={saving}
                 >
-                  더 담그기
+                  더 꾸미기
                 </button>
                 <button type="submit" className={styles.primary} disabled={saving || !captureReady}>
                   {saving ? '저장 중…' : '저장하기'}
@@ -455,4 +643,53 @@ function SilhouetteSvg({ silhouette, reliefUrl }: { silhouette: Silhouette; reli
       )}
     </svg>
   );
+}
+
+/** 토핑 버튼 아이콘 (작은 SVG) */
+function ToppingIcon({ type }: { type: ToppingType }) {
+  const c = toppingRegistry[type].color;
+  const common = { width: 18, height: 18, viewBox: '-10 -10 20 20', 'aria-hidden': true } as const;
+  switch (type) {
+    case 'almond':
+      return (
+        <svg {...common}>
+          <ellipse rx="8" ry="5" fill={c} stroke="#b08550" strokeWidth="1" />
+        </svg>
+      );
+    case 'crunch':
+      return (
+        <svg {...common}>
+          <polygon points="-6,-2 -2,-6 3,-5 6,0 2,5 -4,4" fill={c} />
+          <polygon points="4,-8 7,-6 6,-3 3,-4" fill={c} />
+        </svg>
+      );
+    case 'sprinkle':
+      return (
+        <svg {...common}>
+          <rect x="-7" y="-6" width="7" height="2.6" rx="1.3" fill="#f26d7d" transform="rotate(-30)" />
+          <rect x="0" y="-1" width="7" height="2.6" rx="1.3" fill="#6cb4ee" transform="rotate(20)" />
+          <rect x="-5" y="3" width="7" height="2.6" rx="1.3" fill="#f7c548" transform="rotate(-10)" />
+        </svg>
+      );
+    case 'star':
+      return (
+        <svg {...common}>
+          <polygon points="0,-9 2.6,-3 9,-3 4,1.5 5.8,8 0,4.2 -5.8,8 -4,1.5 -9,-3 -2.6,-3" fill={c} />
+        </svg>
+      );
+    case 'pearl':
+      return (
+        <svg {...common}>
+          <circle cx="-3" cy="2" r="4" fill="#d9d6d0" />
+          <circle cx="4" cy="-3" r="3.2" fill="#e9e6e1" />
+          <circle cx="-4.6" cy="0.4" r="1.2" fill="#fff" />
+        </svg>
+      );
+    case 'heart':
+      return (
+        <svg {...common}>
+          <path d="M0 8 C-2 6 -9 1 -8 -3.5 C-7 -8 -2 -8 0 -4 C2 -8 7 -8 8 -3.5 C9 1 2 6 0 8Z" fill={c} />
+        </svg>
+      );
+  }
 }

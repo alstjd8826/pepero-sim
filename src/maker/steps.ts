@@ -1,8 +1,8 @@
 import type { WebGLRenderer } from 'three';
 
-export type StepId = 'upload' | 'shape' | 'dip' | 'finish';
+export type StepId = 'upload' | 'shape' | 'dip' | 'decorate' | 'finish';
 
-export const makerSteps: StepId[] = ['upload', 'shape', 'dip', 'finish'];
+export const makerSteps: StepId[] = ['upload', 'shape', 'dip', 'decorate', 'finish'];
 
 export function nextStep(id: StepId): StepId | null {
   const i = makerSteps.indexOf(id);

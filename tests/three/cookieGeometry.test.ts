@@ -1,4 +1,5 @@
 import { describe, it, expect } from 'vitest';
+import { COATING_TYPES } from '@/src/recipe/types';
 import { Box3 } from 'three';
 import { buildCookieGeometry } from '@/src/three/cookieGeometry';
 import { baseRegistry, coatingRegistry } from '@/src/three/registry';
@@ -43,7 +44,8 @@ describe('registry', () => {
     expect(baseRegistry.stick.silhouetteSize).toBe(2.0);
     expect(baseRegistry.stick.silhouetteBottomY).toBe(3.8);
     expect(baseRegistry.none.buildExtras()).toBeNull();
-    expect(coatingRegistry['milk-choco']).toEqual({ color: '#4a2716', roughness: 0.35 });
+    for (const t of COATING_TYPES) expect(coatingRegistry[t].color).toMatch(/^#[0-9a-f]{6}$/);
+    expect(coatingRegistry['milk-choco']).toMatchObject({ color: '#4a2716', roughness: 0.35 });
     expect(baseRegistry.stick.buildExtras()).not.toBe(baseRegistry.stick.buildExtras());
   });
 });
